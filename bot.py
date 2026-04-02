@@ -27,7 +27,9 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS menu_buttons (
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE,
-            content TEXT
+            content TEXT,
+            inline_button_text TEXT,
+            inline_button_url TEXT
         )
     """)
     
@@ -63,6 +65,16 @@ async def init_db():
     """)
     
     try:
+        await conn.execute("ALTER TABLE menu_buttons ADD COLUMN IF NOT EXISTS inline_button_text TEXT")
+    except Exception:
+        pass
+    
+    try:
+        await conn.execute("ALTER TABLE menu_buttons ADD COLUMN IF NOT EXISTS inline_button_url TEXT")
+    except Exception:
+        pass
+    
+    try:
         await conn.execute("ALTER TABLE subs_buttons ADD COLUMN IF NOT EXISTS chat_id TEXT")
     except Exception:
         pass
@@ -83,6 +95,17 @@ def is_bot_link(chat_id: str) -> bool:
         return username.startswith("bot") or "bot" in username
     return False
 
+def normalize_url(url: str) -> str:
+    url = url.strip()
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("@"):
+        username = url[1:]
+    else:
+        username = url
+    username = username.strip().lower()
+    return f"https://t.me/{username}"
+
 async def init_defaults():
     conn = await get_conn()
     
@@ -102,6 +125,8 @@ async def init_defaults():
         "Новое название:": "<blockquote><b>✏️ Введите новое название</b></blockquote>",
         "Новая ссылка:": "<blockquote><b>🔗 Введите новую ссылку-приглашение</b></blockquote>",
         "Новый CHAT ID:": "<blockquote><b>🆔 Введите новый CHAT ID</b></blockquote>",
+        "Текст кнопки:": "<blockquote><b>🔘 Введите текст инлайн-кнопки</b>\n<i>• Например: Перейти к трафику</i>\n<i>• Оставьте пустым, чтобы удалить кнопку</i></blockquote>",
+        "URL кнопки:": "<blockquote><b>🔗 Введите ссылку для инлайн-кнопки</b>\n<i>• https://t.me/example</i>\n<i>• Или @username</i></blockquote>",
         "Добавлено: {name}": "<blockquote><b>✅ Добавлено:</b> {name}\n<i>• Кнопка появится в меню подписок</i></blockquote>",
         "Удалено: {name}": "<blockquote><b>❌ Удалено:</b> {name}\n<i>• Кнопка удалена из меню</i></blockquote>",
         "Изменено: {name}": "<blockquote><b>✏️ Изменено:</b> {name}\n<i>• Изменения вступят в силу сразу</i></blockquote>",
@@ -219,6 +244,8 @@ class EditStates(StatesGroup):
     waiting_reply_edit_name = State()
     waiting_reply_edit_text = State()
     waiting_reply_edit_id = State()
+    waiting_reply_inline_text = State()
+    waiting_reply_inline_url = State()
     waiting_inline_add_name = State()
     waiting_inline_add_url = State()
     waiting_inline_add_chat_id = State()
@@ -265,7 +292,6 @@ async def start(message: types.Message, state: FSMContext):
     user = await conn.fetchrow("SELECT capcha_passed FROM users WHERE user_id=$1", user_id)
     subscribed = await check_subscriptions(user_id)
     
-    # Уже прошел капчу и подписан → сразу в меню
     if user and user["capcha_passed"] and subscribed:
         success_text = await conn.fetchval("SELECT value FROM settings WHERE key='success_text'")
         await conn.close()
@@ -278,14 +304,12 @@ async def start(message: types.Message, state: FSMContext):
         await message.answer(success_text, parse_mode="HTML", reply_markup=keyboard)
         return
     
-    # Прошел капчу, но не подписан → показываем подписки
     if user and user["capcha_passed"] and not subscribed:
         start_text = await conn.fetchval("SELECT value FROM settings WHERE key='start_text'")
         await conn.close()
         await message.answer(start_text, parse_mode="HTML", reply_markup=await get_subs_keyboard())
         return
     
-    # Не проходил капчу → показываем капчу
     await conn.close()
     correct_emoji = random.choice(CAPCHA_EMOJIS)
     keyboard = get_capcha_keyboard(correct_emoji)
@@ -395,15 +419,80 @@ async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
         return
     btn_id = int(call.data.split("_")[2])
     conn = await get_conn()
-    row = await conn.fetchrow("SELECT name, content FROM menu_buttons WHERE id=$1", btn_id)
+    row = await conn.fetchrow("SELECT id, name, content, inline_button_text, inline_button_url FROM menu_buttons WHERE id=$1", btn_id)
     await conn.close()
     await state.update_data(waiting_reply_edit_id=btn_id)
+    
+    inline_info = ""
+    if row["inline_button_text"] and row["inline_button_url"]:
+        inline_info = f"\n<b>• Инлайн-кнопка:</b> [{row['inline_button_text']}]({row['inline_button_url']})"
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Изменить название", callback_data="reply_change_name"), InlineKeyboardButton(text="📝 Изменить текст", callback_data="reply_change_text")],
+        [InlineKeyboardButton(text="🔗 Добавить/Изменить инлайн-кнопку", callback_data="reply_add_inline")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply")]
     ])
-    await call.message.edit_text(f"<blockquote><b>📋 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущий текст:</b> <code>{row['content']}</code>\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+    
+    if row["inline_button_text"] and row["inline_button_url"]:
+        keyboard.inline_keyboard.insert(2, [InlineKeyboardButton(text="❌ Удалить инлайн-кнопку", callback_data="reply_remove_inline")])
+    
+    await call.message.edit_text(f"<blockquote><b>📋 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущий текст:</b> <code>{row['content']}</code>{inline_info}\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
+
+@dp.callback_query(lambda call: call.data == "reply_add_inline")
+async def reply_add_inline(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply_edit")]
+    ])
+    await call.message.edit_text(await get_system_message("Текст кнопки:"), parse_mode="HTML", reply_markup=keyboard)
+    await state.set_state(EditStates.waiting_reply_inline_text)
+    await call.answer()
+
+@dp.callback_query(lambda call: call.data == "reply_remove_inline")
+async def reply_remove_inline(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
+    data = await state.get_data()
+    btn_id = data.get("waiting_reply_edit_id")
+    if btn_id:
+        conn = await get_conn()
+        await conn.execute("UPDATE menu_buttons SET inline_button_text=NULL, inline_button_url=NULL WHERE id=$1", btn_id)
+        await conn.close()
+        await call.answer("✅ Инлайн-кнопка удалена")
+        await reply_edit_select(call, state)
+    await call.answer()
+
+@dp.message(EditStates.waiting_reply_inline_text)
+async def reply_inline_text(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    await state.update_data(waiting_reply_inline_text=message.text)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply_edit")]
+    ])
+    await message.answer(await get_system_message("URL кнопки:"), parse_mode="HTML", reply_markup=keyboard)
+    await state.set_state(EditStates.waiting_reply_inline_url)
+
+@dp.message(EditStates.waiting_reply_inline_url)
+async def reply_inline_url(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    data = await state.get_data()
+    btn_id = data.get("waiting_reply_edit_id")
+    inline_text = data.get("waiting_reply_inline_text")
+    inline_url = normalize_url(message.text)
+    
+    if btn_id:
+        conn = await get_conn()
+        await conn.execute("UPDATE menu_buttons SET inline_button_text=$1, inline_button_url=$2 WHERE id=$3", inline_text, inline_url, btn_id)
+        await conn.close()
+        await message.answer("✅ Инлайн-кнопка добавлена/изменена")
+    await state.clear()
+    await reply_edit_select(message, state)
 
 @dp.callback_query(lambda call: call.data == "reply_change_name")
 async def reply_change_name(call: types.CallbackQuery, state: FSMContext):
@@ -438,13 +527,23 @@ async def back_to_reply_edit(call: types.CallbackQuery, state: FSMContext):
     btn_id = data.get("waiting_reply_edit_id")
     if btn_id:
         conn = await get_conn()
-        row = await conn.fetchrow("SELECT name, content FROM menu_buttons WHERE id=$1", btn_id)
+        row = await conn.fetchrow("SELECT id, name, content, inline_button_text, inline_button_url FROM menu_buttons WHERE id=$1", btn_id)
         await conn.close()
+        
+        inline_info = ""
+        if row["inline_button_text"] and row["inline_button_url"]:
+            inline_info = f"\n<b>• Инлайн-кнопка:</b> [{row['inline_button_text']}]({row['inline_button_url']})"
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Изменить название", callback_data="reply_change_name"), InlineKeyboardButton(text="📝 Изменить текст", callback_data="reply_change_text")],
+            [InlineKeyboardButton(text="🔗 Добавить/Изменить инлайн-кнопку", callback_data="reply_add_inline")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply")]
         ])
-        await call.message.edit_text(f"<blockquote><b>📋 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущий текст:</b> <code>{row['content']}</code>\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+        
+        if row["inline_button_text"] and row["inline_button_url"]:
+            keyboard.inline_keyboard.insert(2, [InlineKeyboardButton(text="❌ Удалить инлайн-кнопку", callback_data="reply_remove_inline")])
+        
+        await call.message.edit_text(f"<blockquote><b>📋 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущий текст:</b> <code>{row['content']}</code>{inline_info}\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
     await state.set_state(None)
     await call.answer()
 
@@ -911,10 +1010,15 @@ async def back_to_admin_callback(call: types.CallbackQuery):
 @dp.message(lambda message: True)
 async def handle_menu_buttons(message: types.Message):
     conn = await get_conn()
-    row = await conn.fetchrow("SELECT content FROM menu_buttons WHERE name=$1", message.text)
+    row = await conn.fetchrow("SELECT content, inline_button_text, inline_button_url FROM menu_buttons WHERE name=$1", message.text)
     await conn.close()
     if row:
-        await message.answer(row["content"], parse_mode="HTML")
+        keyboard = None
+        if row["inline_button_text"] and row["inline_button_url"]:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=row["inline_button_text"], url=row["inline_button_url"])]
+            ])
+        await message.answer(row["content"], parse_mode="HTML", reply_markup=keyboard)
 
 async def main():
     await init_db()
