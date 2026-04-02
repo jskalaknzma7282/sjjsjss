@@ -55,10 +55,14 @@ async def init_db():
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
-            capcha_passed BOOLEAN DEFAULT FALSE,
             registered_at TIMESTAMP DEFAULT NOW()
         )
     """)
+    
+    try:
+        await conn.execute("ALTER TABLE users ADD COLUMN capcha_passed BOOLEAN DEFAULT FALSE")
+    except Exception:
+        pass
     
     await conn.close()
 
@@ -231,7 +235,6 @@ async def check_subscriptions(user_id: int) -> bool:
     
     for row in rows:
         url = row["url"]
-        # Извлекаем username из ссылки
         if "t.me/" in url:
             username = url.split("t.me/")[-1]
             try:
@@ -246,18 +249,15 @@ async def check_subscriptions(user_id: int) -> bool:
 async def start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     
-    # Проверяем, проходил ли пользователь капчу
     conn = await get_conn()
     user = await conn.fetchrow("SELECT capcha_passed FROM users WHERE user_id=$1", user_id)
     
     if user and user["capcha_passed"]:
-        # Капча уже пройдена, сразу показываем приветствие и подписки
         start_text = await conn.fetchval("SELECT value FROM settings WHERE key='start_text'")
         await conn.close()
         await message.answer(start_text, parse_mode="HTML", reply_markup=await get_subs_keyboard())
     else:
         await conn.close()
-        # Показываем капчу
         correct_emoji = random.choice(CAPCHA_EMOJIS)
         keyboard = get_capcha_keyboard(correct_emoji)
         
@@ -275,7 +275,6 @@ async def check_capcha(call: types.CallbackQuery, state: FSMContext):
     correct_emoji = data.get("correct_emoji")
     
     if selected_emoji == correct_emoji:
-        # Сохраняем, что капча пройдена
         conn = await get_conn()
         await conn.execute("INSERT INTO users (user_id, capcha_passed) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET capcha_passed=$2", 
                           call.from_user.id, True)
@@ -297,15 +296,12 @@ async def check_capcha(call: types.CallbackQuery, state: FSMContext):
 async def check_subs(call: types.CallbackQuery):
     user_id = call.from_user.id
     
-    # Проверяем подписки
     subscribed = await check_subscriptions(user_id)
     
     if not subscribed:
-        # Не подписан - показываем alert
         await call.answer("❌ Вы не подписались на все каналы! Подпишитесь и нажмите снова.", show_alert=True)
         return
     
-    # Подписан - открываем доступ
     conn = await get_conn()
     success_text = await conn.fetchval("SELECT value FROM settings WHERE key='success_text'")
     await conn.close()
