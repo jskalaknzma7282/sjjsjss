@@ -18,6 +18,13 @@ conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
+CREATE TABLE IF NOT EXISTS menu_buttons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE,
+    content TEXT
+)
+""")
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS subs_buttons (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
@@ -50,8 +57,8 @@ def normalize_url(url: str) -> str:
     return f"https://t.me/{username}"
 
 def init_defaults():
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("start_text", "<b>Добро пожаловать!</b>\n<i>Подпишитесь на каналы:</i>"))
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("success_text", "<b>Успешная регистрация</b>"))
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("start_text", "<b>Текст после нажатия /start:</b>\n\n<blockquote>👋 Добро пожаловать в Krot Free\n\n🌟Мы предоставляем вам бесплатную информация, которую вы нигде больше не найдете.\n\n🤖Проект полностью бесплатен, мы просим вас подписаться на наших спонсоров, после чего вы получите полный доступ к меню и всей информации!</blockquote>"))
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("success_text", "<b>Успешная регистрация</b>\n<i>Доступ к меню открыт</i>"))
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("error_text", "<b>Ошибка</b>\n<i>Вы не подписались на все каналы</i>"))
     
     system_defaults = {
@@ -69,6 +76,10 @@ def init_defaults():
     }
     for key, value in system_defaults.items():
         cursor.execute("INSERT OR IGNORE INTO system_messages (key, value) VALUES (?, ?)", (key, value))
+    
+    for i in range(1, 6):
+        cursor.execute("INSERT OR IGNORE INTO menu_buttons (name, content) VALUES (?, ?)", (str(i), f"Текст для кнопки {i}"))
+    
     conn.commit()
 
 init_defaults()
@@ -77,6 +88,12 @@ def get_system_message(key: str) -> str:
     cursor.execute("SELECT value FROM system_messages WHERE key=?", (key,))
     row = cursor.fetchone()
     return row[0] if row else key
+
+def get_menu_keyboard():
+    cursor.execute("SELECT name FROM menu_buttons ORDER BY id")
+    buttons = [KeyboardButton(text=row[0]) for row in cursor.fetchall()]
+    keyboard = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def get_subs_keyboard():
     cursor.execute("SELECT id, name, url FROM subs_buttons ORDER BY id")
@@ -89,11 +106,28 @@ def get_subs_keyboard():
 
 def get_admin_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Reply кнопки", callback_data="admin_reply")],
         [InlineKeyboardButton(text="Инлайн кнопки", callback_data="admin_inline")],
         [InlineKeyboardButton(text="Тексты", callback_data="admin_texts")],
         [InlineKeyboardButton(text="Настройки", callback_data="admin_settings")],
         [InlineKeyboardButton(text="Выйти", callback_data="admin_exit")]
     ])
+
+def get_reply_list_keyboard():
+    cursor.execute("SELECT id, name FROM menu_buttons ORDER BY id")
+    buttons = cursor.fetchall()
+    keyboard = []
+    row = []
+    for btn_id, name in buttons:
+        row.append(InlineKeyboardButton(text=name, callback_data=f"reply_edit_{btn_id}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton(text="+ Добавить", callback_data="reply_add"), InlineKeyboardButton(text="- Удалить", callback_data="reply_delete")])
+    keyboard.append([InlineKeyboardButton(text="Назад", callback_data="back_to_admin")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_inline_list_keyboard():
     cursor.execute("SELECT id, name FROM subs_buttons ORDER BY id")
@@ -139,6 +173,12 @@ def get_system_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 class EditStates(StatesGroup):
+    waiting_reply_add_name = State()
+    waiting_reply_add_text = State()
+    waiting_reply_delete_id = State()
+    waiting_reply_edit_name = State()
+    waiting_reply_edit_text = State()
+    waiting_reply_edit_id = State()
     waiting_inline_add_name = State()
     waiting_inline_add_url = State()
     waiting_inline_delete_id = State()
@@ -159,12 +199,17 @@ async def check_subs(call: types.CallbackQuery):
     cursor.execute("SELECT value FROM settings WHERE key='success_text'")
     success_text = cursor.fetchone()[0]
     await call.message.delete()
-    await call.message.answer(success_text, parse_mode="HTML")
+    await call.message.answer(success_text, parse_mode="HTML", reply_markup=get_menu_keyboard())
     await call.answer()
 
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     await message.answer("<b>Админ панель открыта</b>\n<i>Выберите действие:</i>", parse_mode="HTML", reply_markup=get_admin_keyboard())
+
+@dp.callback_query(lambda call: call.data == "admin_reply")
+async def admin_reply(call: types.CallbackQuery):
+    await call.message.edit_text("<b>Reply кнопки</b>", parse_mode="HTML", reply_markup=get_reply_list_keyboard())
+    await call.answer()
 
 @dp.callback_query(lambda call: call.data == "admin_inline")
 async def admin_inline(call: types.CallbackQuery):
@@ -186,6 +231,113 @@ async def admin_exit(call: types.CallbackQuery):
     await call.message.delete()
     await call.answer()
 
+# ========== Reply кнопки ==========
+@dp.callback_query(lambda call: call.data.startswith("reply_edit_"))
+async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
+    btn_id = int(call.data.split("_")[2])
+    cursor.execute("SELECT name, content FROM menu_buttons WHERE id=?", (btn_id,))
+    name, content = cursor.fetchone()
+    await state.update_data(waiting_reply_edit_id=btn_id)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Изменить название", callback_data="reply_change_name")],
+        [InlineKeyboardButton(text="Изменить текст", callback_data="reply_change_text")],
+        [InlineKeyboardButton(text="Назад", callback_data="back_to_reply")]
+    ])
+    await call.message.edit_text(f"<b>Текущее название:</b> <code>{name}</code>\n\n<b>Текущий текст:</b> <code>{content}</code>\n\n<i>Что меняем?</i>", parse_mode="HTML", reply_markup=keyboard)
+    await call.answer()
+
+@dp.callback_query(lambda call: call.data == "reply_change_name")
+async def reply_change_name(call: types.CallbackQuery, state: FSMContext):
+    await call.message.edit_text(get_system_message("Новое название:"), parse_mode="HTML")
+    await state.set_state(EditStates.waiting_reply_edit_name)
+    await call.answer()
+
+@dp.callback_query(lambda call: call.data == "reply_change_text")
+async def reply_change_text(call: types.CallbackQuery, state: FSMContext):
+    await call.message.edit_text(get_system_message("Новый текст:"), parse_mode="HTML")
+    await state.set_state(EditStates.waiting_reply_edit_text)
+    await call.answer()
+
+@dp.message(EditStates.waiting_reply_edit_name)
+async def reply_save_edit_name(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    btn_id = data["waiting_reply_edit_id"]
+    new_name = message.text
+    cursor.execute("UPDATE menu_buttons SET name=? WHERE id=?", (new_name, btn_id))
+    conn.commit()
+    await message.answer(get_system_message("Изменено: {name}").replace("{name}", new_name), parse_mode="HTML")
+    await state.clear()
+    await admin_reply(message)
+
+@dp.message(EditStates.waiting_reply_edit_text)
+async def reply_save_edit_text(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    btn_id = data["waiting_reply_edit_id"]
+    new_text = message.html_text
+    cursor.execute("UPDATE menu_buttons SET content=? WHERE id=?", (new_text, btn_id))
+    conn.commit()
+    await message.answer(get_system_message("Изменено: {name}").replace("{name}", "текст"), parse_mode="HTML")
+    await state.clear()
+    await admin_reply(message)
+
+@dp.callback_query(lambda call: call.data == "reply_add")
+async def reply_add_start(call: types.CallbackQuery, state: FSMContext):
+    await call.message.edit_text(get_system_message("Название:"), parse_mode="HTML")
+    await state.set_state(EditStates.waiting_reply_add_name)
+    await call.answer()
+
+@dp.message(EditStates.waiting_reply_add_name)
+async def reply_add_name(message: types.Message, state: FSMContext):
+    await state.update_data(waiting_reply_add_name=message.text)
+    await message.answer(get_system_message("Текст:"), parse_mode="HTML")
+    await state.set_state(EditStates.waiting_reply_add_text)
+
+@dp.message(EditStates.waiting_reply_add_text)
+async def reply_add_text(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    name = data["waiting_reply_add_name"]
+    text = message.html_text
+    cursor.execute("INSERT INTO menu_buttons (name, content) VALUES (?, ?)", (name, text))
+    conn.commit()
+    await message.answer(get_system_message("Добавлено: {name}").replace("{name}", name), parse_mode="HTML")
+    await state.clear()
+    await admin_reply(message)
+
+@dp.callback_query(lambda call: call.data == "reply_delete")
+async def reply_delete_start(call: types.CallbackQuery, state: FSMContext):
+    cursor.execute("SELECT id, name FROM menu_buttons ORDER BY id")
+    buttons = cursor.fetchall()
+    if not buttons:
+        await call.message.edit_text(get_system_message("Нет кнопок"), parse_mode="HTML")
+        await call.answer()
+        return
+    text = get_system_message("Выберите:") + "\n\n"
+    for btn_id, name in buttons:
+        text += f"{btn_id}. {name}\n"
+    text += f"\n{get_system_message('Введите ID:')}"
+    await call.message.edit_text(text, parse_mode="HTML")
+    await state.set_state(EditStates.waiting_reply_delete_id)
+    await call.answer()
+
+@dp.message(EditStates.waiting_reply_delete_id)
+async def reply_delete_save(message: types.Message, state: FSMContext):
+    try:
+        btn_id = int(message.text)
+        cursor.execute("SELECT name FROM menu_buttons WHERE id=?", (btn_id,))
+        row = cursor.fetchone()
+        if row:
+            name = row[0]
+            cursor.execute("DELETE FROM menu_buttons WHERE id=?", (btn_id,))
+            conn.commit()
+            await message.answer(get_system_message("Удалено: {name}").replace("{name}", name), parse_mode="HTML")
+        else:
+            await message.answer(get_system_message("Ошибка"), parse_mode="HTML")
+    except ValueError:
+        await message.answer(get_system_message("Ошибка"), parse_mode="HTML")
+    await state.clear()
+    await admin_reply(message)
+
+# ========== Инлайн кнопки ==========
 @dp.callback_query(lambda call: call.data.startswith("inline_edit_"))
 async def inline_edit_select(call: types.CallbackQuery, state: FSMContext):
     btn_id = int(call.data.split("_")[2])
@@ -291,6 +443,7 @@ async def inline_delete_save(message: types.Message, state: FSMContext):
     await state.clear()
     await admin_inline(message)
 
+# ========== Тексты ==========
 @dp.callback_query(lambda call: call.data == "text_start")
 async def edit_start_text(call: types.CallbackQuery, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='start_text'")
@@ -329,6 +482,7 @@ async def save_text(message: types.Message, state: FSMContext):
     await state.clear()
     await admin_texts(message)
 
+# ========== Системные сообщения ==========
 @dp.callback_query(lambda call: call.data.startswith("system_"))
 async def edit_system_message(call: types.CallbackQuery, state: FSMContext):
     key_raw = call.data.replace("system_", "").replace("_", " ").replace("name", "{name}")
@@ -374,6 +528,12 @@ async def save_system_message(message: types.Message, state: FSMContext):
     await state.clear()
     await admin_settings(message)
 
+# ========== Назад ==========
+@dp.callback_query(lambda call: call.data == "back_to_reply")
+async def back_to_reply(call: types.CallbackQuery):
+    await call.message.edit_text("<b>Reply кнопки</b>", parse_mode="HTML", reply_markup=get_reply_list_keyboard())
+    await call.answer()
+
 @dp.callback_query(lambda call: call.data == "back_to_inline")
 async def back_to_inline(call: types.CallbackQuery):
     await call.message.edit_text("<b>Инлайн кнопки</b>", parse_mode="HTML", reply_markup=get_inline_list_keyboard())
@@ -383,6 +543,14 @@ async def back_to_inline(call: types.CallbackQuery):
 async def back_to_admin_callback(call: types.CallbackQuery):
     await call.message.edit_text("<b>Админ панель открыта</b>\n<i>Выберите действие:</i>", parse_mode="HTML", reply_markup=get_admin_keyboard())
     await call.answer()
+
+# ========== Кнопки пользователя ==========
+@dp.message(lambda message: True)
+async def handle_menu_buttons(message: types.Message):
+    cursor.execute("SELECT content FROM menu_buttons WHERE name=?", (message.text,))
+    row = cursor.fetchone()
+    if row:
+        await message.answer(row[0], parse_mode="HTML")
 
 async def main():
     await dp.start_polling(bot)
