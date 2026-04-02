@@ -263,22 +263,32 @@ async def start(message: types.Message, state: FSMContext):
     
     conn = await get_conn()
     user = await conn.fetchrow("SELECT capcha_passed FROM users WHERE user_id=$1", user_id)
+    subscribed = await check_subscriptions(user_id)
     
-    if user and user["capcha_passed"]:
+    # Уже прошел капчу и подписан → сразу в меню
+    if user and user["capcha_passed"] and subscribed:
+        await conn.close()
+        await message.answer("🔑", reply_markup=await get_menu_keyboard())
+        return
+    
+    # Прошел капчу, но не подписан → показываем подписки
+    if user and user["capcha_passed"] and not subscribed:
         start_text = await conn.fetchval("SELECT value FROM settings WHERE key='start_text'")
         await conn.close()
         await message.answer(start_text, parse_mode="HTML", reply_markup=await get_subs_keyboard())
-    else:
-        await conn.close()
-        correct_emoji = random.choice(CAPCHA_EMOJIS)
-        keyboard = get_capcha_keyboard(correct_emoji)
-        
-        await state.set_state(CapchaStates.waiting_capcha)
-        await state.update_data(correct_emoji=correct_emoji)
-        
-        capcha_text = f"<blockquote><b>🔐 Проверка</b>\n<i>• Выберите смайл: {correct_emoji}</i>\n<i>• Нажмите на кнопку с этим смайлом</i>\n<i>• Это защита от ботов</i></blockquote>"
-        
-        await message.answer(capcha_text, parse_mode="HTML", reply_markup=keyboard)
+        return
+    
+    # Не проходил капчу → показываем капчу
+    await conn.close()
+    correct_emoji = random.choice(CAPCHA_EMOJIS)
+    keyboard = get_capcha_keyboard(correct_emoji)
+    
+    await state.set_state(CapchaStates.waiting_capcha)
+    await state.update_data(correct_emoji=correct_emoji)
+    
+    capcha_text = f"<blockquote><b>🔐 Проверка</b>\n<i>• Выберите смайл: {correct_emoji}</i>\n<i>• Нажмите на кнопку с этим смайлом</i>\n<i>• Это защита от ботов</i></blockquote>"
+    
+    await message.answer(capcha_text, parse_mode="HTML", reply_markup=keyboard)
 
 @dp.callback_query(lambda call: call.data.startswith("capcha_"), CapchaStates.waiting_capcha)
 async def check_capcha(call: types.CallbackQuery, state: FSMContext):
@@ -314,7 +324,20 @@ async def check_subs(call: types.CallbackQuery):
         await call.answer("❌ Вы не подписались на все каналы! Подпишитесь и нажмите снова.", show_alert=True)
         return
     
+    # Проверяем, не открыт ли уже доступ
     conn = await get_conn()
+    user = await conn.fetchrow("SELECT capcha_passed FROM users WHERE user_id=$1", user_id)
+    
+    if user and user["capcha_passed"]:
+        # Доступ уже есть, просто показываем меню
+        await call.message.delete()
+        await call.message.answer("🔑", reply_markup=await get_menu_keyboard())
+        await call.answer()
+        await conn.close()
+        return
+    
+    # Первый раз открываем доступ
+    await conn.execute("UPDATE users SET capcha_passed=$1 WHERE user_id=$2", True, user_id)
     success_text = await conn.fetchval("SELECT value FROM settings WHERE key='success_text'")
     await conn.close()
     
