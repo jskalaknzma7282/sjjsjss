@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sqlite3
+import re
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -37,6 +38,31 @@ CREATE TABLE IF NOT EXISTS settings (
 )
 """)
 conn.commit()
+
+def normalize_url(url: str) -> str:
+    """Преобразует @username и username в https://t.me/username"""
+    url = url.strip()
+    # Если уже полная ссылка
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    # Если @username или просто username
+    if url.startswith("@"):
+        username = url[1:]
+    else:
+        username = url
+    # Убираем пробелы и приводим к нижнему регистру
+    username = username.strip().lower()
+    return f"https://t.me/{username}"
+
+def normalize_name(name: str) -> str:
+    """Приводит название кнопки к нижнему регистру для сравнения, но сохраняет оригинал"""
+    return name.strip().lower()
+
+def check_button_exists(name: str) -> bool:
+    """Проверяет существование кнопки (регистронезависимо)"""
+    cursor.execute("SELECT name FROM menu_buttons")
+    existing = [row[0].lower() for row in cursor.fetchall()]
+    return name.lower() in existing
 
 cursor.execute("SELECT COUNT(*) FROM menu_buttons")
 if cursor.fetchone()[0] == 0:
@@ -141,7 +167,11 @@ async def add_reply_start(message: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_reply_name)
 async def add_reply_name(message: types.Message, state: FSMContext):
-    await state.update_data(name=message.text)
+    name = message.text.strip()
+    if check_button_exists(name):
+        await message.answer(f"Кнопка с названием '{name}' уже существует! Введите другое название:")
+        return
+    await state.update_data(name=name)
     await message.answer("Введите текст (можно с форматированием через меню Telegram):")
     await state.set_state(AdminStates.waiting_reply_content)
 
@@ -149,13 +179,10 @@ async def add_reply_name(message: types.Message, state: FSMContext):
 async def add_reply_content(message: types.Message, state: FSMContext):
     data = await state.get_data()
     name = data["name"]
-    content = message.html_text  # Сохраняем форматирование
-    try:
-        cursor.execute("INSERT INTO menu_buttons (name, content) VALUES (?, ?)", (name, content))
-        conn.commit()
-        await message.answer(f"Reply кнопка '{name}' добавлена!")
-    except sqlite3.IntegrityError:
-        await message.answer(f"Кнопка с именем '{name}' уже существует!")
+    content = message.html_text
+    cursor.execute("INSERT INTO menu_buttons (name, content) VALUES (?, ?)", (name, content))
+    conn.commit()
+    await message.answer(f"Reply кнопка '{name}' добавлена!")
     await state.clear()
 
 @dp.message(lambda message: message.text == "Удалить reply кнопку")
@@ -211,7 +238,7 @@ async def edit_reply_select(message: types.Message, state: FSMContext):
 async def edit_reply_content(message: types.Message, state: FSMContext):
     data = await state.get_data()
     name = data["edit_name"]
-    content = message.html_text  # Сохраняем форматирование
+    content = message.html_text
     cursor.execute("UPDATE menu_buttons SET content=? WHERE name=?", (content, name))
     conn.commit()
     await message.answer(f"Текст reply кнопки '{name}' обновлен!", reply_markup=get_admin_keyboard())
@@ -226,17 +253,17 @@ async def add_subs_start(message: types.Message, state: FSMContext):
 @dp.message(AdminStates.waiting_subs_name)
 async def add_subs_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
-    await message.answer("Введите ссылку на канал/чат/бота:")
+    await message.answer("Введите ссылку на канал/чат/бота (можно @username):")
     await state.set_state(AdminStates.waiting_subs_url)
 
 @dp.message(AdminStates.waiting_subs_url)
 async def add_subs_url(message: types.Message, state: FSMContext):
     data = await state.get_data()
     name = data["name"]
-    url = message.text
+    url = normalize_url(message.text)  # Автоматически преобразуем ссылку
     cursor.execute("INSERT INTO subs_buttons (name, url) VALUES (?, ?)", (name, url))
     conn.commit()
-    await message.answer(f"Инлайн кнопка '{name}' добавлена!", reply_markup=get_admin_keyboard())
+    await message.answer(f"Инлайн кнопка '{name}' добавлена! Ссылка: {url}", reply_markup=get_admin_keyboard())
     await state.clear()
 
 @dp.message(lambda message: message.text == "Удалить инлайн кнопку подписки")
@@ -296,7 +323,7 @@ async def edit_subs_select(message: types.Message, state: FSMContext):
 @dp.message(AdminStates.waiting_subs_edit_name)
 async def edit_subs_new_name(message: types.Message, state: FSMContext):
     await state.update_data(edit_name=message.text)
-    await message.answer("Введите новую ссылку:")
+    await message.answer("Введите новую ссылку (можно @username):")
     await state.set_state(AdminStates.waiting_subs_edit_url)
 
 @dp.message(AdminStates.waiting_subs_edit_url)
@@ -304,10 +331,10 @@ async def edit_subs_new_url(message: types.Message, state: FSMContext):
     data = await state.get_data()
     btn_id = data["edit_id"]
     new_name = data["edit_name"]
-    new_url = message.text
+    new_url = normalize_url(message.text)  # Автоматически преобразуем ссылку
     cursor.execute("UPDATE subs_buttons SET name=?, url=? WHERE id=?", (new_name, new_url, btn_id))
     conn.commit()
-    await message.answer(f"Инлайн кнопка обновлена!", reply_markup=get_admin_keyboard())
+    await message.answer(f"Инлайн кнопка обновлена! Ссылка: {new_url}", reply_markup=get_admin_keyboard())
     await state.clear()
 
 # ========== Управление текстами ==========
@@ -320,7 +347,7 @@ async def edit_start_text_start(message: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_start_text)
 async def edit_start_text_save(message: types.Message, state: FSMContext):
-    cursor.execute("UPDATE settings SET value=? WHERE key='start_text'", (message.html_text,))  # Сохраняем форматирование
+    cursor.execute("UPDATE settings SET value=? WHERE key='start_text'", (message.html_text,))
     conn.commit()
     await message.answer("Текст /start обновлен!", reply_markup=get_admin_keyboard())
     await state.clear()
@@ -334,7 +361,7 @@ async def edit_success_text_start(message: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_success_text)
 async def edit_success_text_save(message: types.Message, state: FSMContext):
-    cursor.execute("UPDATE settings SET value=? WHERE key='success_text'", (message.html_text,))  # Сохраняем форматирование
+    cursor.execute("UPDATE settings SET value=? WHERE key='success_text'", (message.html_text,))
     conn.commit()
     await message.answer("Текст успеха обновлен!", reply_markup=get_admin_keyboard())
     await state.clear()
