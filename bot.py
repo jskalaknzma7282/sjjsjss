@@ -16,7 +16,6 @@ dp = Dispatcher(storage=MemoryStorage())
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Таблица для reply кнопок меню
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS menu_buttons (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,8 +23,6 @@ CREATE TABLE IF NOT EXISTS menu_buttons (
     content TEXT
 )
 """)
-
-# Таблица для инлайн кнопок подписок
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS subs_buttons (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,8 +30,6 @@ CREATE TABLE IF NOT EXISTS subs_buttons (
     url TEXT
 )
 """)
-
-# Таблица для настроек
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -43,7 +38,6 @@ CREATE TABLE IF NOT EXISTS settings (
 """)
 conn.commit()
 
-# Дефолтные reply кнопки меню
 cursor.execute("SELECT COUNT(*) FROM menu_buttons")
 if cursor.fetchone()[0] == 0:
     default_buttons = [
@@ -59,7 +53,6 @@ if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO menu_buttons (name, content) VALUES (?, ?)", (name, content))
     conn.commit()
 
-# Дефолтные инлайн кнопки подписок
 cursor.execute("SELECT COUNT(*) FROM subs_buttons")
 if cursor.fetchone()[0] == 0:
     default_subs = [
@@ -73,7 +66,6 @@ if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO subs_buttons (name, url) VALUES (?, ?)", (name, url))
     conn.commit()
 
-# Дефолтные тексты
 cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("start_text", "Добро пожаловать! Подпишитесь на каналы:"))
 cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("success_text", "Успешная регистрация"))
 conn.commit()
@@ -81,7 +73,6 @@ conn.commit()
 def get_menu_keyboard():
     cursor.execute("SELECT name FROM menu_buttons")
     buttons = [KeyboardButton(text=row[0]) for row in cursor.fetchall()]
-    # Разбиваем по 2 кнопки в ряд
     keyboard = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -95,7 +86,6 @@ def get_subs_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_admin_keyboard():
-    # Reply кнопки админки в ряд по 2
     admin_buttons = [
         "Добавить reply кнопку", "Удалить reply кнопку",
         "Изменить текст reply кнопки", "Добавить инлайн кнопку подписки",
@@ -107,20 +97,17 @@ def get_admin_keyboard():
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 class AdminStates(StatesGroup):
-    # Reply кнопки
     waiting_reply_name = State()
     waiting_reply_content = State()
     waiting_reply_delete = State()
     waiting_reply_edit_name = State()
     waiting_reply_edit_content = State()
-    # Инлайн кнопки подписок
     waiting_subs_name = State()
     waiting_subs_url = State()
     waiting_subs_delete_id = State()
     waiting_subs_edit_id = State()
     waiting_subs_edit_name = State()
     waiting_subs_edit_url = State()
-    # Тексты
     waiting_start_text = State()
     waiting_success_text = State()
 
@@ -128,14 +115,14 @@ class AdminStates(StatesGroup):
 async def start(message: types.Message):
     cursor.execute("SELECT value FROM settings WHERE key='start_text'")
     start_text = cursor.fetchone()[0]
-    await message.answer(start_text, reply_markup=get_subs_keyboard())
+    await message.answer(start_text, parse_mode="HTML", reply_markup=get_subs_keyboard())
 
 @dp.callback_query(lambda call: call.data == "check_subs")
 async def check_subs(call: types.CallbackQuery):
     cursor.execute("SELECT value FROM settings WHERE key='success_text'")
     success_text = cursor.fetchone()[0]
     await call.message.delete()
-    await call.message.answer(success_text, reply_markup=get_menu_keyboard())
+    await call.message.answer(success_text, parse_mode="HTML", reply_markup=get_menu_keyboard())
     await call.answer()
 
 @dp.message(Command("admin"))
@@ -155,7 +142,7 @@ async def add_reply_start(message: types.Message, state: FSMContext):
 @dp.message(AdminStates.waiting_reply_name)
 async def add_reply_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
-    await message.answer("Введите текст, который будет выдавать эта кнопка:")
+    await message.answer("Введите текст (можно с HTML-тегами: <b>жирный</b>, <i>курсив</i>, <blockquote>цитата</blockquote>):")
     await state.set_state(AdminStates.waiting_reply_content)
 
 @dp.message(AdminStates.waiting_reply_content)
@@ -217,7 +204,7 @@ async def edit_reply_select(message: types.Message, state: FSMContext):
         await state.clear()
         return
     await state.update_data(edit_name=message.text)
-    await message.answer("Введите новый текст для этой reply кнопки:")
+    await message.answer("Введите новый текст (можно с HTML-тегами: <b>жирный</b>, <i>курсив</i>, <blockquote>цитата</blockquote>):")
     await state.set_state(AdminStates.waiting_reply_edit_content)
 
 @dp.message(AdminStates.waiting_reply_edit_content)
@@ -328,7 +315,7 @@ async def edit_subs_new_url(message: types.Message, state: FSMContext):
 async def edit_start_text_start(message: types.Message, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='start_text'")
     current = cursor.fetchone()[0]
-    await message.answer(f"Текущий текст:\n{current}\n\nВведите новый текст для /start:")
+    await message.answer(f"Текущий текст:\n{current}\n\nВведите новый текст (можно с HTML-тегами):")
     await state.set_state(AdminStates.waiting_start_text)
 
 @dp.message(AdminStates.waiting_start_text)
@@ -342,7 +329,7 @@ async def edit_start_text_save(message: types.Message, state: FSMContext):
 async def edit_success_text_start(message: types.Message, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='success_text'")
     current = cursor.fetchone()[0]
-    await message.answer(f"Текущий текст:\n{current}\n\nВведите новый текст для 'Успешная регистрация':")
+    await message.answer(f"Текущий текст:\n{current}\n\nВведите новый текст (можно с HTML-тегами):")
     await state.set_state(AdminStates.waiting_success_text)
 
 @dp.message(AdminStates.waiting_success_text)
@@ -352,13 +339,13 @@ async def edit_success_text_save(message: types.Message, state: FSMContext):
     await message.answer("Текст успеха обновлен!", reply_markup=get_admin_keyboard())
     await state.clear()
 
-# Обработка нажатий на reply кнопки меню
+# Обработка нажатий на reply кнопки меню (с HTML-форматированием)
 @dp.message(lambda message: True)
 async def handle_menu_buttons(message: types.Message):
     cursor.execute("SELECT content FROM menu_buttons WHERE name=?", (message.text,))
     row = cursor.fetchone()
     if row:
-        await message.answer(row[0])
+        await message.answer(row[0], parse_mode="HTML")
 
 async def main():
     await dp.start_polling(bot)
