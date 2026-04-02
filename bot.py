@@ -69,29 +69,30 @@ async def init_db():
 async def get_conn():
     return await asyncpg.connect(DATABASE_URL)
 
-def normalize_url(url: str) -> str:
-    url = url.strip()
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    if url.startswith("@"):
-        username = url[1:]
-    else:
-        username = url
-    username = username.strip().lower()
-    return f"https://t.me/{username}"
+def normalize_url_or_chat_id(text: str):
+    """Определяет, ссылка это или CHAT ID"""
+    text = text.strip()
+    
+    # CHAT ID для приватной группы (число, может быть с минусом)
+    if text.lstrip('-').isdigit():
+        return {"type": "private_group", "chat_id": int(text)}
+    
+    # Полная ссылка на публичный канал
+    if "t.me/" in text:
+        username = text.split("t.me/")[-1]
+        return {"type": "public_channel", "username": username}
+    
+    # @username
+    if text.startswith("@"):
+        return {"type": "public_channel", "username": text[1:]}
+    
+    return None
 
-def is_bot_link(url: str) -> bool:
+def is_bot_link(target) -> bool:
     """Проверяет, ведет ли ссылка на бота"""
-    if "t.me/" in url:
-        username = url.split("t.me/")[-1]
-        if username.startswith("bot") or "bot" in username.lower():
-            return True
-        try:
-            import re
-            if re.search(r'[a-zA-Z0-9_]+bot', username, re.IGNORECASE):
-                return True
-        except:
-            pass
+    if target["type"] == "public_channel":
+        username = target["username"].lower()
+        return username.startswith("bot") or "bot" in username
     return False
 
 async def init_defaults():
@@ -108,13 +109,13 @@ async def init_defaults():
     
     system_defaults = {
         "Название:": "<blockquote><b>📝 Введите новое название</b>\n<i>• Название будет отображаться на кнопке</i>\n<i>• Можно использовать эмодзи для красоты</i>\n<i>• Максимум 50 символов</i></blockquote>",
-        "Ссылка:": "<blockquote><b>🔗 Введите ссылку</b>\n<i>• Можно указать @username</i>\n<i>• Можно полную ссылку https://t.me/...</i>\n<i>• Ссылка должна быть на канал/чат/бота</i></blockquote>",
+        "Ссылка:": "<blockquote><b>🔗 Введите ссылку или CHAT ID</b>\n<i>• Для публичного канала: https://t.me/username или @username</i>\n<i>• Для приватной группы: числовой CHAT ID (например: -1001234567890)</i>\n<i>• CHAT ID можно получить через @userinfobot</i>\n<i>• Бот должен быть админом в канале/группе</i></blockquote>",
         "Новое название:": "<blockquote><b>✏️ Введите новое название</b>\n<i>• Старое название будет заменено</i>\n<i>• Название должно быть уникальным</i></blockquote>",
-        "Новая ссылка:": "<blockquote><b>🔗 Введите новую ссылку</b>\n<i>• Старая ссылка будет заменена</i>\n<i>• Формат: @username или полная ссылка</i></blockquote>",
+        "Новая ссылка:": "<blockquote><b>🔗 Введите новую ссылку или CHAT ID</b>\n<i>• Для публичного канала: https://t.me/username или @username</i>\n<i>• Для приватной группы: числовой CHAT ID</i></blockquote>",
         "Добавлено: {name}": "<blockquote><b>✅ Добавлено:</b> {name}\n<i>• Новая кнопка появилась в меню</i>\n<i>• Вы можете отредактировать её позже</i></blockquote>",
         "Удалено: {name}": "<blockquote><b>❌ Удалено:</b> {name}\n<i>• Кнопка удалена из меню</i>\n<i>• Данные восстановить нельзя</i></blockquote>",
         "Изменено: {name}": "<blockquote><b>✏️ Изменено:</b> {name}\n<i>• Обновленные данные сохранены</i>\n<i>• Изменения вступят в силу сразу</i></blockquote>",
-        "Нет кнопок": "<blockquote><b>📭 Нет кнопок</b>\n<i>• Добавьте кнопку через меню</i>\n<i>• Нажмите \"➕ Добавить\"</i>\n<i>• Введите название и текст/ссылку</i></blockquote>",
+        "Нет кнопок": "<blockquote><b>📭 Нет кнопок</b>\n<i>• Добавьте кнопку через меню</i>\n<i>• Нажмите \"➕ Добавить\"</i>\n<i>• Введите название и ссылку/CHAT ID</i></blockquote>",
         "Ошибка": "<blockquote><b>⚠️ Ошибка</b>\n<i>• Проверьте введенные данные</i>\n<i>• Убедитесь, что ID существует</i>\n<i>• Попробуйте еще раз</i></blockquote>",
         "Выберите:": "<blockquote><b>🔢 Выберите ID кнопки</b>\n<i>• Введите номер из списка ниже</i>\n<i>• Только цифры</i></blockquote>",
         "Введите ID:": "<blockquote><b>🔢 Введите ID</b>\n<i>• Напишите только цифру</i>\n<i>• Пример: 1, 2, 3...</i></blockquote>"
@@ -156,7 +157,12 @@ async def get_subs_keyboard():
     buttons = []
     row = []
     for r in rows:
-        row.append(InlineKeyboardButton(text=r["name"], url=r["url"]))
+        target = normalize_url_or_chat_id(r["url"])
+        if target and target["type"] == "public_channel":
+            url = f"https://t.me/{target['username']}"
+        else:
+            url = r["url"]
+        row.append(InlineKeyboardButton(text=r["name"], url=url))
         if len(row) == 3:
             buttons.append(row)
             row = []
@@ -248,17 +254,25 @@ async def check_subscriptions(user_id: int) -> bool:
     await conn.close()
     
     for row in rows:
-        url = row["url"]
-        if is_bot_link(url):
+        target = normalize_url_or_chat_id(row["url"])
+        if not target:
             continue
-        if "t.me/" in url:
-            username = url.split("t.me/")[-1]
-            try:
-                chat_member = await bot.get_chat_member(chat_id=f"@{username}", user_id=user_id)
-                if chat_member.status in ["left", "kicked"]:
-                    return False
-            except:
+        
+        if is_bot_link(target):
+            continue
+        
+        try:
+            if target["type"] == "private_group":
+                chat_member = await bot.get_chat_member(chat_id=target["chat_id"], user_id=user_id)
+            else:
+                chat_member = await bot.get_chat_member(chat_id=f"@{target['username']}", user_id=user_id)
+            
+            if chat_member.status in ["left", "kicked"]:
                 return False
+        except Exception as e:
+            logging.error(f"Ошибка проверки подписки: {e}")
+            return False
+    
     return True
 
 @dp.message(Command("start"))
@@ -343,7 +357,7 @@ async def admin_reply(call: types.CallbackQuery):
 
 @dp.callback_query(lambda call: call.data == "admin_inline")
 async def admin_inline(call: types.CallbackQuery):
-    await call.message.edit_text("<blockquote><b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку, чтобы изменить название или ссылку</i>\n<i>• Используйте кнопки + Добавить и - Удалить</i></blockquote>", parse_mode="HTML", reply_markup=await get_inline_list_keyboard())
+    await call.message.edit_text("<blockquote><b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку, чтобы изменить название или ссылку/CHAT ID</i>\n<i>• Используйте кнопки + Добавить и - Удалить</i></blockquote>", parse_mode="HTML", reply_markup=await get_inline_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "admin_texts")
@@ -518,10 +532,15 @@ async def inline_edit_select(call: types.CallbackQuery, state: FSMContext):
     await conn.close()
     await state.update_data(waiting_inline_edit_id=btn_id)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Изменить название", callback_data="inline_change_name"), InlineKeyboardButton(text="🔗 Изменить ссылку", callback_data="inline_change_url")],
+        [InlineKeyboardButton(text="✏️ Изменить название", callback_data="inline_change_name"), InlineKeyboardButton(text="🔗 Изменить ссылку/CHAT ID", callback_data="inline_change_url")],
         [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="back_to_inline")]
     ])
-    await call.message.edit_text(f"<blockquote><b>🔗 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущая ссылка:</b> <code>{row['url']}</code>\n\n<i>• Что хотите изменить?</i>\n<i>• Нажмите на соответствующую кнопку</i>\n<i>• Нажмите \"Назад к списку\" для возврата</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+    
+    display_url = row["url"]
+    if display_url.lstrip('-').isdigit():
+        display_url = f"CHAT ID: {display_url}"
+    
+    await call.message.edit_text(f"<blockquote><b>🔗 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущая ссылка/CHAT ID:</b> <code>{display_url}</code>\n\n<i>• Что хотите изменить?</i>\n<i>• Нажмите на соответствующую кнопку</i>\n<i>• Нажмите \"Назад к списку\" для возврата</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "inline_change_name")
@@ -551,10 +570,15 @@ async def back_to_inline_edit(call: types.CallbackQuery, state: FSMContext):
         row = await conn.fetchrow("SELECT name, url FROM subs_buttons WHERE id=$1", btn_id)
         await conn.close()
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Изменить название", callback_data="inline_change_name"), InlineKeyboardButton(text="🔗 Изменить ссылку", callback_data="inline_change_url")],
+            [InlineKeyboardButton(text="✏️ Изменить название", callback_data="inline_change_name"), InlineKeyboardButton(text="🔗 Изменить ссылку/CHAT ID", callback_data="inline_change_url")],
             [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="back_to_inline")]
         ])
-        await call.message.edit_text(f"<blockquote><b>🔗 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущая ссылка:</b> <code>{row['url']}</code>\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+        
+        display_url = row["url"]
+        if display_url.lstrip('-').isdigit():
+            display_url = f"CHAT ID: {display_url}"
+        
+        await call.message.edit_text(f"<blockquote><b>🔗 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущая ссылка/CHAT ID:</b> <code>{display_url}</code>\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
     await state.set_state(None)
     await call.answer()
 
@@ -574,11 +598,11 @@ async def inline_save_edit_name(message: types.Message, state: FSMContext):
 async def inline_save_edit_url(message: types.Message, state: FSMContext):
     data = await state.get_data()
     btn_id = data["waiting_inline_edit_id"]
-    new_url = normalize_url(message.text)
+    new_url = message.text.strip()
     conn = await get_conn()
     await conn.execute("UPDATE subs_buttons SET url=$1 WHERE id=$2", new_url, btn_id)
     await conn.close()
-    await message.answer((await get_system_message("Изменено: {name}")).replace("{name}", "ссылка"), parse_mode="HTML")
+    await message.answer((await get_system_message("Изменено: {name}")).replace("{name}", "ссылка/CHAT ID"), parse_mode="HTML")
     await state.clear()
     await admin_inline(message)
 
@@ -613,7 +637,7 @@ async def back_to_inline_add(call: types.CallbackQuery, state: FSMContext):
 async def inline_add_url(message: types.Message, state: FSMContext):
     data = await state.get_data()
     name = data["waiting_inline_add_name"]
-    url = normalize_url(message.text)
+    url = message.text.strip()
     conn = await get_conn()
     await conn.execute("INSERT INTO subs_buttons (name, url) VALUES ($1, $2)", name, url)
     await conn.close()
@@ -727,7 +751,7 @@ async def back_to_reply(call: types.CallbackQuery):
 
 @dp.callback_query(lambda call: call.data == "back_to_inline")
 async def back_to_inline(call: types.CallbackQuery):
-    await call.message.edit_text("<blockquote><b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку для изменения</i>\n<i>• Используйте кнопки + Добавить и - Удалить</i></blockquote>", parse_mode="HTML", reply_markup=await get_inline_list_keyboard())
+    await call.message.edit_text("<blockquote><b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку, чтобы изменить название или ссылку/CHAT ID</i>\n<i>• Используйте кнопки + Добавить и - Удалить</i></blockquote>", parse_mode="HTML", reply_markup=await get_inline_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "back_to_admin")
