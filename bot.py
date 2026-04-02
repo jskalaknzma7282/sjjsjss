@@ -88,21 +88,12 @@ def get_subs_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_admin_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Инлайн кнопки")],
-            [KeyboardButton(text="Тексты")],
-            [KeyboardButton(text="Настройки")],
-            [KeyboardButton(text="Выйти")]
-        ],
-        resize_keyboard=True
-    )
-
-def get_settings_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Системные сообщения")], [KeyboardButton(text="Назад")]],
-        resize_keyboard=True
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Инлайн кнопки", callback_data="admin_inline")],
+        [InlineKeyboardButton(text="Тексты", callback_data="admin_texts")],
+        [InlineKeyboardButton(text="Настройки", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="Выйти", callback_data="admin_exit")]
+    ])
 
 def get_inline_list_keyboard():
     cursor.execute("SELECT id, name FROM subs_buttons ORDER BY id")
@@ -175,29 +166,25 @@ async def check_subs(call: types.CallbackQuery):
 async def admin_panel(message: types.Message):
     await message.answer("<b>Админ панель открыта</b>\n<i>Выберите действие:</i>", parse_mode="HTML", reply_markup=get_admin_keyboard())
 
-@dp.message(lambda message: message.text == "Выйти")
-async def exit_admin(message: types.Message):
-    await message.answer("<b>Выход</b>", parse_mode="HTML", reply_markup=types.ReplyKeyboardRemove())
+@dp.callback_query(lambda call: call.data == "admin_inline")
+async def admin_inline(call: types.CallbackQuery):
+    await call.message.edit_text("<b>Инлайн кнопки</b>", parse_mode="HTML", reply_markup=get_inline_list_keyboard())
+    await call.answer()
 
-@dp.message(lambda message: message.text == "Инлайн кнопки")
-async def inline_buttons_menu(message: types.Message):
-    await message.answer("<b>Инлайн кнопки</b>", parse_mode="HTML", reply_markup=get_inline_list_keyboard())
+@dp.callback_query(lambda call: call.data == "admin_texts")
+async def admin_texts(call: types.CallbackQuery):
+    await call.message.edit_text("<b>Тексты</b>", parse_mode="HTML", reply_markup=get_texts_keyboard())
+    await call.answer()
 
-@dp.message(lambda message: message.text == "Тексты")
-async def texts_menu(message: types.Message):
-    await message.answer("<b>Тексты</b>", parse_mode="HTML", reply_markup=get_texts_keyboard())
+@dp.callback_query(lambda call: call.data == "admin_settings")
+async def admin_settings(call: types.CallbackQuery):
+    await call.message.edit_text("<b>Системные сообщения</b>", parse_mode="HTML", reply_markup=get_system_keyboard())
+    await call.answer()
 
-@dp.message(lambda message: message.text == "Настройки")
-async def settings_menu(message: types.Message):
-    await message.answer("<b>Настройки</b>", parse_mode="HTML", reply_markup=get_settings_keyboard())
-
-@dp.message(lambda message: message.text == "Системные сообщения")
-async def system_messages_menu(message: types.Message):
-    await message.answer("<b>Системные сообщения</b>", parse_mode="HTML", reply_markup=get_system_keyboard())
-
-@dp.message(lambda message: message.text == "Назад")
-async def back_to_admin(message: types.Message):
-    await message.answer("<b>Админ панель открыта</b>\n<i>Выберите действие:</i>", parse_mode="HTML", reply_markup=get_admin_keyboard())
+@dp.callback_query(lambda call: call.data == "admin_exit")
+async def admin_exit(call: types.CallbackQuery):
+    await call.message.delete()
+    await call.answer()
 
 @dp.callback_query(lambda call: call.data.startswith("inline_edit_"))
 async def inline_edit_select(call: types.CallbackQuery, state: FSMContext):
@@ -234,7 +221,7 @@ async def inline_save_edit_name(message: types.Message, state: FSMContext):
     conn.commit()
     await message.answer(get_system_message("Изменено: {name}").replace("{name}", new_name), parse_mode="HTML")
     await state.clear()
-    await inline_buttons_menu(message)
+    await admin_inline(message)
 
 @dp.message(EditStates.waiting_inline_edit_url)
 async def inline_save_edit_url(message: types.Message, state: FSMContext):
@@ -245,7 +232,7 @@ async def inline_save_edit_url(message: types.Message, state: FSMContext):
     conn.commit()
     await message.answer(get_system_message("Изменено: {name}").replace("{name}", "ссылка"), parse_mode="HTML")
     await state.clear()
-    await inline_buttons_menu(message)
+    await admin_inline(message)
 
 @dp.callback_query(lambda call: call.data == "inline_add")
 async def inline_add_start(call: types.CallbackQuery, state: FSMContext):
@@ -268,7 +255,7 @@ async def inline_add_url(message: types.Message, state: FSMContext):
     conn.commit()
     await message.answer(get_system_message("Добавлено: {name}").replace("{name}", name), parse_mode="HTML")
     await state.clear()
-    await inline_buttons_menu(message)
+    await admin_inline(message)
 
 @dp.callback_query(lambda call: call.data == "inline_delete")
 async def inline_delete_start(call: types.CallbackQuery, state: FSMContext):
@@ -302,7 +289,7 @@ async def inline_delete_save(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer(get_system_message("Ошибка"), parse_mode="HTML")
     await state.clear()
-    await inline_buttons_menu(message)
+    await admin_inline(message)
 
 @dp.callback_query(lambda call: call.data == "text_start")
 async def edit_start_text(call: types.CallbackQuery, state: FSMContext):
@@ -340,7 +327,7 @@ async def save_text(message: types.Message, state: FSMContext):
     conn.commit()
     await message.answer("<b>Сохранено</b>", parse_mode="HTML")
     await state.clear()
-    await texts_menu(message)
+    await admin_texts(message)
 
 @dp.callback_query(lambda call: call.data.startswith("system_"))
 async def edit_system_message(call: types.CallbackQuery, state: FSMContext):
@@ -385,7 +372,7 @@ async def save_system_message(message: types.Message, state: FSMContext):
     conn.commit()
     await message.answer("<b>Сохранено</b>", parse_mode="HTML")
     await state.clear()
-    await system_messages_menu(message)
+    await admin_settings(message)
 
 @dp.callback_query(lambda call: call.data == "back_to_inline")
 async def back_to_inline(call: types.CallbackQuery):
