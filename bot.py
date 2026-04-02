@@ -253,7 +253,7 @@ async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="Изменить текст", callback_data="reply_change_text")],
         [InlineKeyboardButton(text="Назад", callback_data="back_to_reply")]
     ])
-    await call.message.edit_text(f"<b>Текущее название:</b> {name}\n\n<b>Текущий текст:</b> {content}\n\n<i>Что меняем?</i>", parse_mode="HTML", reply_markup=keyboard)
+    await call.message.edit_text(f"<b>Текущее название:</b> <code>{name}</code>\n\n<b>Текущий текст:</b> <code>{content}</code>\n\n<i>Что меняем?</i>", parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "reply_change_name")
@@ -361,7 +361,7 @@ async def inline_edit_select(call: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="Изменить ссылку", callback_data="inline_change_url")],
         [InlineKeyboardButton(text="Назад", callback_data="back_to_inline")]
     ])
-    await call.message.edit_text(f"<b>Текущее название:</b> {name}\n\n<b>Текущая ссылка:</b> {url}\n\n<i>Что меняем?</i>", parse_mode="HTML", reply_markup=keyboard)
+    await call.message.edit_text(f"<b>Текущее название:</b> <code>{name}</code>\n\n<b>Текущая ссылка:</b> <code>{url}</code>\n\n<i>Что меняем?</i>", parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "inline_change_name")
@@ -463,7 +463,7 @@ async def edit_start_text(call: types.CallbackQuery, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='start_text'")
     current = cursor.fetchone()[0]
     await state.update_data(text_key="start_text")
-    await call.message.edit_text(f"<b>Текущий текст:</b>\n{current}\n\n<i>Введите новый текст</i>", parse_mode="HTML")
+    await call.message.edit_text(f"<b>Текущий текст:</b>\n<code>{current}</code>\n\n<i>Введите новый текст</i>", parse_mode="HTML")
     await state.set_state(EditStates.waiting_text)
     await call.answer()
 
@@ -472,7 +472,7 @@ async def edit_success_text(call: types.CallbackQuery, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='success_text'")
     current = cursor.fetchone()[0]
     await state.update_data(text_key="success_text")
-    await call.message.edit_text(f"<b>Текущий текст:</b>\n{current}\n\n<i>Введите новый текст</i>", parse_mode="HTML")
+    await call.message.edit_text(f"<b>Текущий текст:</b>\n<code>{current}</code>\n\n<i>Введите новый текст</i>", parse_mode="HTML")
     await state.set_state(EditStates.waiting_text)
     await call.answer()
 
@@ -481,7 +481,7 @@ async def edit_error_text(call: types.CallbackQuery, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='error_text'")
     current = cursor.fetchone()[0]
     await state.update_data(text_key="error_text")
-    await call.message.edit_text(f"<b>Текущий текст:</b>\n{current}\n\n<i>Введите новый текст</i>", parse_mode="HTML")
+    await call.message.edit_text(f"<b>Текущий текст:</b>\n<code>{current}</code>\n\n<i>Введите новый текст</i>", parse_mode="HTML")
     await state.set_state(EditStates.waiting_text)
     await call.answer()
 
@@ -531,7 +531,7 @@ async def edit_system_message(call: types.CallbackQuery, state: FSMContext):
     cursor.execute("SELECT value FROM system_messages WHERE key=?", (key,))
     current = cursor.fetchone()[0]
     await state.update_data(system_key=key)
-    await call.message.edit_text(f"<b>Текущее сообщение:</b>\n{current}\n\n<i>Введите новое</i>", parse_mode="HTML")
+    await call.message.edit_text(f"<b>Текущее сообщение:</b>\n<code>{current}</code>\n\n<i>Введите новое</i>", parse_mode="HTML")
     await state.set_state(EditStates.waiting_system)
     await call.answer()
 
@@ -546,20 +546,23 @@ async def save_system_message(message: types.Message, state: FSMContext):
     await state.clear()
     await system_messages_menu(message)
 
-# ========== Назад ==========
+# ========== Назад (удаляет сообщение) ==========
 @dp.callback_query(lambda call: call.data == "back_to_reply")
 async def back_to_reply(call: types.CallbackQuery):
-    await call.message.edit_text("<b>Reply кнопки</b>", parse_mode="HTML", reply_markup=get_reply_list_keyboard())
+    await call.message.delete()
+    await reply_buttons_menu(call.message)
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "back_to_inline")
 async def back_to_inline(call: types.CallbackQuery):
-    await call.message.edit_text("<b>Инлайн кнопки</b>", parse_mode="HTML", reply_markup=get_inline_list_keyboard())
+    await call.message.delete()
+    await inline_buttons_menu(call.message)
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "back_to_admin")
 async def back_to_admin_callback(call: types.CallbackQuery):
-    await call.message.edit_text("<b>Админ-панель</b>", parse_mode="HTML", reply_markup=get_admin_keyboard())
+    await call.message.delete()
+    await admin_panel(call.message)
     await call.answer()
 
 # ========== Кнопки пользователя ==========
