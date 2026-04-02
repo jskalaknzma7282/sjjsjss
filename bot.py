@@ -46,7 +46,6 @@ CREATE TABLE IF NOT EXISTS system_messages (
 """)
 conn.commit()
 
-# Список смайлов для капчи
 CAPCHA_EMOJIS = ["🐍", "🐷", "🐥", "🦄", "🦊", "🦋", "🧊", "🔮"]
 
 def normalize_url(url: str) -> str:
@@ -167,15 +166,13 @@ def get_texts_keyboard():
     ])
 
 def get_capcha_keyboard(correct_emoji):
-    # Перемешиваем смайлы
     emojis = CAPCHA_EMOJIS.copy()
     random.shuffle(emojis)
-    # Создаем кнопки 4x2
     keyboard = [
         [InlineKeyboardButton(text=emojis[0], callback_data=f"capcha_{emojis[0]}"), InlineKeyboardButton(text=emojis[1], callback_data=f"capcha_{emojis[1]}"), InlineKeyboardButton(text=emojis[2], callback_data=f"capcha_{emojis[2]}"), InlineKeyboardButton(text=emojis[3], callback_data=f"capcha_{emojis[3]}")],
         [InlineKeyboardButton(text=emojis[4], callback_data=f"capcha_{emojis[4]}"), InlineKeyboardButton(text=emojis[5], callback_data=f"capcha_{emojis[5]}"), InlineKeyboardButton(text=emojis[6], callback_data=f"capcha_{emojis[6]}"), InlineKeyboardButton(text=emojis[7], callback_data=f"capcha_{emojis[7]}")]
     ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard), correct_emoji
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 class CapchaStates(StatesGroup):
     waiting_capcha = State()
@@ -197,15 +194,13 @@ class EditStates(StatesGroup):
     waiting_system = State()
 
 @dp.message(Command("start"))
-async def start(message: types.Message):
+async def start(message: types.Message, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='start_text'")
     start_text = cursor.fetchone()[0]
     
-    # Выбираем случайный смайл для капчи
     correct_emoji = random.choice(CAPCHA_EMOJIS)
-    keyboard, _ = get_capcha_keyboard(correct_emoji)
+    keyboard = get_capcha_keyboard(correct_emoji)
     
-    # Сохраняем правильный смайл в состоянии пользователя
     await state.set_state(CapchaStates.waiting_capcha)
     await state.update_data(correct_emoji=correct_emoji)
     
@@ -225,9 +220,8 @@ async def check_capcha(call: types.CallbackQuery, state: FSMContext):
         await call.message.answer("<blockquote><b>✅ Капча пройдена</b>\n<i>• Теперь подпишитесь на каналы</i></blockquote>", parse_mode="HTML")
         await state.clear()
     else:
-        # Неправильный выбор - показываем новую капчу
         new_correct_emoji = random.choice(CAPCHA_EMOJIS)
-        keyboard, _ = get_capcha_keyboard(new_correct_emoji)
+        keyboard = get_capcha_keyboard(new_correct_emoji)
         await state.update_data(correct_emoji=new_correct_emoji)
         await call.message.edit_text(f"<blockquote><b>❌ Неправильно!</b>\n<i>• Выберите смайл: {new_correct_emoji}</i>\n<i>• Попробуйте еще раз</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
     
@@ -243,16 +237,9 @@ async def check_subs(call: types.CallbackQuery):
     ])
     
     await call.message.delete()
-    
-    # Отправляем 🔑 с reply-кнопками
     await call.message.answer("🔑", reply_markup=get_menu_keyboard())
-    
-    # Пауза 1 секунда
     await asyncio.sleep(1)
-    
-    # Отправляем сообщение с одобрением доступа
     await call.message.answer(success_text, parse_mode="HTML", reply_markup=keyboard)
-    
     await call.answer()
 
 @dp.message(Command("admin"))
