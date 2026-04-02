@@ -22,8 +22,16 @@ CAPCHA_EMOJIS = ["🐍", "🐷", "🐥", "🦄", "🦊", "🦋", "🧊", "🔮"]
 async def init_db():
     conn = await asyncpg.connect(DATABASE_URL)
     
+    # Удаляем старые таблицы, чтобы создать заново с правильными колонками
+    await conn.execute("DROP TABLE IF EXISTS users CASCADE")
+    await conn.execute("DROP TABLE IF EXISTS subs_buttons CASCADE")
+    await conn.execute("DROP TABLE IF EXISTS menu_buttons CASCADE")
+    await conn.execute("DROP TABLE IF EXISTS settings CASCADE")
+    await conn.execute("DROP TABLE IF EXISTS system_messages CASCADE")
+    
+    # Создаем таблицы заново
     await conn.execute("""
-        CREATE TABLE IF NOT EXISTS menu_buttons (
+        CREATE TABLE menu_buttons (
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE,
             content TEXT
@@ -31,45 +39,35 @@ async def init_db():
     """)
     
     await conn.execute("""
-        CREATE TABLE IF NOT EXISTS subs_buttons (
+        CREATE TABLE subs_buttons (
             id SERIAL PRIMARY KEY,
             name TEXT,
-            url TEXT
+            url TEXT,
+            chat_id TEXT
         )
     """)
     
     await conn.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
+        CREATE TABLE settings (
             key TEXT PRIMARY KEY,
             value TEXT
         )
     """)
     
     await conn.execute("""
-        CREATE TABLE IF NOT EXISTS system_messages (
+        CREATE TABLE system_messages (
             key TEXT PRIMARY KEY,
             value TEXT
         )
     """)
     
     await conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             user_id BIGINT PRIMARY KEY,
+            capcha_passed BOOLEAN DEFAULT FALSE,
             registered_at TIMESTAMP DEFAULT NOW()
         )
     """)
-    
-    # Добавляем колонку capcha_passed если её нет
-    try:
-        await conn.execute("ALTER TABLE users ADD COLUMN capcha_passed BOOLEAN DEFAULT FALSE")
-    except Exception:
-        pass
-    
-    # Добавляем колонку chat_id в subs_buttons если её нет
-    try:
-        await conn.execute("ALTER TABLE subs_buttons ADD COLUMN chat_id TEXT")
-    except Exception:
-        pass
     
     await conn.close()
 
