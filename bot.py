@@ -1,5 +1,5 @@
 import asyncio
-import os #ha
+import os
 import random
 import logging
 import asyncpg
@@ -34,8 +34,7 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS subs_buttons (
             id SERIAL PRIMARY KEY,
             name TEXT,
-            url TEXT,
-            chat_id TEXT
+            url TEXT
         )
     """)
     
@@ -60,12 +59,13 @@ async def init_db():
         )
     """)
     
+    # Добавляем колонку capcha_passed если её нет
     try:
         await conn.execute("ALTER TABLE users ADD COLUMN capcha_passed BOOLEAN DEFAULT FALSE")
     except Exception:
         pass
     
-    # Добавляем колонку chat_id если её нет
+    # Добавляем колонку chat_id в subs_buttons если её нет
     try:
         await conn.execute("ALTER TABLE subs_buttons ADD COLUMN chat_id TEXT")
     except Exception:
@@ -76,22 +76,10 @@ async def init_db():
 async def get_conn():
     return await asyncpg.connect(DATABASE_URL)
 
-def normalize_url(url: str) -> str:
-    url = url.strip()
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    if url.startswith("@"):
-        username = url[1:]
-    else:
-        username = url
-    username = username.strip().lower()
-    return f"https://t.me/{username}"
-
-def is_bot_link(url: str) -> bool:
-    if "t.me/" in url:
-        username = url.split("t.me/")[-1]
-        if username.startswith("bot") or "bot" in username.lower():
-            return True
+def is_bot_link(chat_id: str) -> bool:
+    if chat_id and chat_id.startswith("@"):
+        username = chat_id[1:].lower()
+        return username.startswith("bot") or "bot" in username
     return False
 
 async def init_defaults():
@@ -251,11 +239,11 @@ async def check_subscriptions(user_id: int) -> bool:
         if not chat_id:
             continue
         
-        if chat_id.startswith("@") and "bot" in chat_id.lower():
+        if is_bot_link(chat_id):
             continue
         
         try:
-            if chat_id.lstrip('-').isdigit():
+            if str(chat_id).lstrip('-').isdigit():
                 chat_member = await bot.get_chat_member(chat_id=int(chat_id), user_id=user_id)
             else:
                 chat_member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
