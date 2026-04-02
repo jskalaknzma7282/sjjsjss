@@ -13,6 +13,7 @@ from aiogram.fsm.context import FSMContext
 logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/db")
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -22,16 +23,8 @@ CAPCHA_EMOJIS = ["🐍", "🐷", "🐥", "🦄", "🦊", "🦋", "🧊", "🔮"]
 async def init_db():
     conn = await asyncpg.connect(DATABASE_URL)
     
-    # Удаляем старые таблицы, чтобы создать заново с правильными колонками
-    await conn.execute("DROP TABLE IF EXISTS users CASCADE")
-    await conn.execute("DROP TABLE IF EXISTS subs_buttons CASCADE")
-    await conn.execute("DROP TABLE IF EXISTS menu_buttons CASCADE")
-    await conn.execute("DROP TABLE IF EXISTS settings CASCADE")
-    await conn.execute("DROP TABLE IF EXISTS system_messages CASCADE")
-    
-    # Создаем таблицы заново
     await conn.execute("""
-        CREATE TABLE menu_buttons (
+        CREATE TABLE IF NOT EXISTS menu_buttons (
             id SERIAL PRIMARY KEY,
             name TEXT UNIQUE,
             content TEXT
@@ -39,7 +32,7 @@ async def init_db():
     """)
     
     await conn.execute("""
-        CREATE TABLE subs_buttons (
+        CREATE TABLE IF NOT EXISTS subs_buttons (
             id SERIAL PRIMARY KEY,
             name TEXT,
             url TEXT,
@@ -48,26 +41,36 @@ async def init_db():
     """)
     
     await conn.execute("""
-        CREATE TABLE settings (
+        CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT
         )
     """)
     
     await conn.execute("""
-        CREATE TABLE system_messages (
+        CREATE TABLE IF NOT EXISTS system_messages (
             key TEXT PRIMARY KEY,
             value TEXT
         )
     """)
     
     await conn.execute("""
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
             capcha_passed BOOLEAN DEFAULT FALSE,
             registered_at TIMESTAMP DEFAULT NOW()
         )
     """)
+    
+    try:
+        await conn.execute("ALTER TABLE subs_buttons ADD COLUMN IF NOT EXISTS chat_id TEXT")
+    except Exception:
+        pass
+    
+    try:
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS capcha_passed BOOLEAN DEFAULT FALSE")
+    except Exception:
+        pass
     
     await conn.close()
 
@@ -94,7 +97,7 @@ async def init_defaults():
     
     system_defaults = {
         "Название:": "<blockquote><b>📝 Введите название кнопки</b>\n<i>• Например: Мой канал</i>\n<i>• Максимум 50 символов</i></blockquote>",
-        "Ссылка:": "<blockquote><b>🔗 Введите ссылку-приглашение</b>\n<i>• Ссылка для кнопки (пользователь перейдет по ней)</i>\n<i>• Для публичного канала: https://t.me/username</i>\n<i>• Для приватной группы: https://t.me/joinchat/xxxxx</i></blockquote>",
+        "Ссылка:": "<blockquote><b>🔗 Введите ссылку-приглашение</b>\n<i>• Ссылка для кнопки (пользователь перейдет по ней)</i></blockquote>",
         "CHAT ID:": "<blockquote><b>🆔 Введите CHAT ID</b>\n<i>• Для публичного канала: @username</i>\n<i>• Для приватной группы: числовой ID (пример: -1001234567890)</i>\n<i>• Получить через @userinfobot</i></blockquote>",
         "Новое название:": "<blockquote><b>✏️ Введите новое название</b></blockquote>",
         "Новая ссылка:": "<blockquote><b>🔗 Введите новую ссылку-приглашение</b></blockquote>",
@@ -327,31 +330,48 @@ async def check_subs(call: types.CallbackQuery):
 
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     await message.answer("<blockquote><b>🔐 Админ панель открыта</b>\n<i>• Выберите действие из меню ниже</i></blockquote>", parse_mode="HTML", reply_markup=get_admin_keyboard())
 
 @dp.callback_query(lambda call: call.data == "admin_reply")
 async def admin_reply(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     await call.message.edit_text("<blockquote><b>📋 Управление reply кнопками</b>\n<i>• Выберите кнопку для редактирования</i></blockquote>", parse_mode="HTML", reply_markup=await get_reply_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "admin_inline")
 async def admin_inline(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     await call.message.edit_text("<blockquote><b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i></blockquote>", parse_mode="HTML", reply_markup=await get_inline_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "admin_texts")
 async def admin_texts(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     await call.message.edit_text("<blockquote><b>📝 Редактирование текстов</b>\n<i>• Выберите текст для изменения</i></blockquote>", parse_mode="HTML", reply_markup=get_texts_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "admin_exit")
 async def admin_exit(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     await call.message.delete()
     await call.answer()
 
 # ========== Reply кнопки ==========
 @dp.callback_query(lambda call: call.data.startswith("reply_edit_"))
 async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     btn_id = int(call.data.split("_")[2])
     conn = await get_conn()
     row = await conn.fetchrow("SELECT name, content FROM menu_buttons WHERE id=$1", btn_id)
@@ -366,6 +386,9 @@ async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "reply_change_name")
 async def reply_change_name(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply_edit")]
     ])
@@ -375,6 +398,9 @@ async def reply_change_name(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "reply_change_text")
 async def reply_change_text(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply_edit")]
     ])
@@ -384,6 +410,9 @@ async def reply_change_text(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "back_to_reply_edit")
 async def back_to_reply_edit(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     data = await state.get_data()
     btn_id = data.get("waiting_reply_edit_id")
     if btn_id:
@@ -400,6 +429,8 @@ async def back_to_reply_edit(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_reply_edit_name)
 async def reply_save_edit_name(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     data = await state.get_data()
     btn_id = data["waiting_reply_edit_id"]
     new_name = message.text
@@ -412,6 +443,8 @@ async def reply_save_edit_name(message: types.Message, state: FSMContext):
 
 @dp.message(EditStates.waiting_reply_edit_text)
 async def reply_save_edit_text(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     data = await state.get_data()
     btn_id = data["waiting_reply_edit_id"]
     new_text = f"<blockquote>{message.html_text}</blockquote>"
@@ -424,6 +457,9 @@ async def reply_save_edit_text(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "reply_add")
 async def reply_add_start(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply")]
     ])
@@ -433,6 +469,8 @@ async def reply_add_start(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_reply_add_name)
 async def reply_add_name(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     await state.update_data(waiting_reply_add_name=message.text)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply_add")]
@@ -442,6 +480,9 @@ async def reply_add_name(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "back_to_reply_add")
 async def back_to_reply_add(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply")]
     ])
@@ -451,6 +492,8 @@ async def back_to_reply_add(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_reply_add_text)
 async def reply_add_text(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     data = await state.get_data()
     name = data["waiting_reply_add_name"]
     text = f"<blockquote>{message.html_text}</blockquote>"
@@ -463,6 +506,9 @@ async def reply_add_text(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "reply_delete")
 async def reply_delete_start(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     conn = await get_conn()
     rows = await conn.fetch("SELECT id, name FROM menu_buttons ORDER BY id")
     await conn.close()
@@ -486,6 +532,8 @@ async def reply_delete_start(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_reply_delete_id)
 async def reply_delete_save(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     try:
         btn_id = int(message.text)
         conn = await get_conn()
@@ -505,6 +553,9 @@ async def reply_delete_save(message: types.Message, state: FSMContext):
 # ========== Инлайн кнопки ==========
 @dp.callback_query(lambda call: call.data.startswith("inline_edit_"))
 async def inline_edit_select(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     btn_id = int(call.data.split("_")[2])
     conn = await get_conn()
     row = await conn.fetchrow("SELECT name, url, chat_id FROM subs_buttons WHERE id=$1", btn_id)
@@ -523,6 +574,9 @@ async def inline_edit_select(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "inline_change_name")
 async def inline_change_name(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline_edit")]
     ])
@@ -532,6 +586,9 @@ async def inline_change_name(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "inline_change_url")
 async def inline_change_url(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline_edit")]
     ])
@@ -541,6 +598,9 @@ async def inline_change_url(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "inline_change_chat_id")
 async def inline_change_chat_id(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline_edit")]
     ])
@@ -550,6 +610,9 @@ async def inline_change_chat_id(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "back_to_inline_edit")
 async def back_to_inline_edit(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     data = await state.get_data()
     btn_id = data.get("waiting_inline_edit_id")
     if btn_id:
@@ -568,6 +631,8 @@ async def back_to_inline_edit(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_inline_edit_name)
 async def inline_save_edit_name(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     data = await state.get_data()
     btn_id = data["waiting_inline_edit_id"]
     new_name = message.text
@@ -580,6 +645,8 @@ async def inline_save_edit_name(message: types.Message, state: FSMContext):
 
 @dp.message(EditStates.waiting_inline_edit_url)
 async def inline_save_edit_url(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     data = await state.get_data()
     btn_id = data["waiting_inline_edit_id"]
     new_url = message.text.strip()
@@ -592,6 +659,8 @@ async def inline_save_edit_url(message: types.Message, state: FSMContext):
 
 @dp.message(EditStates.waiting_inline_edit_chat_id)
 async def inline_save_edit_chat_id(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     data = await state.get_data()
     btn_id = data["waiting_inline_edit_id"]
     new_chat_id = message.text.strip()
@@ -604,6 +673,9 @@ async def inline_save_edit_chat_id(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "inline_add")
 async def inline_add_start(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline")]
     ])
@@ -613,6 +685,8 @@ async def inline_add_start(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_inline_add_name)
 async def inline_add_name(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     await state.update_data(waiting_inline_add_name=message.text)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline_add_url")]
@@ -622,6 +696,9 @@ async def inline_add_name(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "back_to_inline_add_url")
 async def back_to_inline_add_url(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline")]
     ])
@@ -631,6 +708,8 @@ async def back_to_inline_add_url(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_inline_add_url)
 async def inline_add_url(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     await state.update_data(waiting_inline_add_url=message.text.strip())
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline_add_chat_id")]
@@ -640,6 +719,9 @@ async def inline_add_url(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "back_to_inline_add_chat_id")
 async def back_to_inline_add_chat_id(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline")]
     ])
@@ -649,6 +731,8 @@ async def back_to_inline_add_chat_id(call: types.CallbackQuery, state: FSMContex
 
 @dp.message(EditStates.waiting_inline_add_chat_id)
 async def inline_add_chat_id(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     data = await state.get_data()
     name = data["waiting_inline_add_name"]
     url = data["waiting_inline_add_url"]
@@ -662,6 +746,9 @@ async def inline_add_chat_id(message: types.Message, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "inline_delete")
 async def inline_delete_start(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     conn = await get_conn()
     rows = await conn.fetch("SELECT id, name FROM subs_buttons ORDER BY id")
     await conn.close()
@@ -685,6 +772,8 @@ async def inline_delete_start(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_inline_delete_id)
 async def inline_delete_save(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     try:
         btn_id = int(message.text)
         conn = await get_conn()
@@ -704,6 +793,9 @@ async def inline_delete_save(message: types.Message, state: FSMContext):
 # ========== Тексты ==========
 @dp.callback_query(lambda call: call.data == "text_start")
 async def edit_start_text(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     conn = await get_conn()
     current = await conn.fetchval("SELECT value FROM settings WHERE key='start_text'")
     await conn.close()
@@ -717,6 +809,9 @@ async def edit_start_text(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "text_success")
 async def edit_success_text(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     conn = await get_conn()
     current = await conn.fetchval("SELECT value FROM settings WHERE key='success_text'")
     await conn.close()
@@ -730,6 +825,9 @@ async def edit_success_text(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "text_error")
 async def edit_error_text(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     conn = await get_conn()
     current = await conn.fetchval("SELECT value FROM settings WHERE key='error_text'")
     await conn.close()
@@ -743,11 +841,16 @@ async def edit_error_text(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "back_to_texts")
 async def back_to_texts(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     await call.message.edit_text("<blockquote><b>📝 Редактирование текстов</b>\n<i>• Выберите текст для изменения</i></blockquote>", parse_mode="HTML", reply_markup=get_texts_keyboard())
     await call.answer()
 
 @dp.message(EditStates.waiting_text)
 async def save_text(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
     data = await state.get_data()
     text_key = data["text_key"]
     new_text = f"<blockquote>{message.html_text}</blockquote>"
@@ -761,16 +864,25 @@ async def save_text(message: types.Message, state: FSMContext):
 # ========== Назад ==========
 @dp.callback_query(lambda call: call.data == "back_to_reply")
 async def back_to_reply(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     await call.message.edit_text("<blockquote><b>📋 Управление reply кнопками</b>\n<i>• Выберите кнопку для редактирования</i></blockquote>", parse_mode="HTML", reply_markup=await get_reply_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "back_to_inline")
 async def back_to_inline(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     await call.message.edit_text("<blockquote><b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i></blockquote>", parse_mode="HTML", reply_markup=await get_inline_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "back_to_admin")
 async def back_to_admin_callback(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
     await call.message.edit_text("<blockquote><b>🔐 Админ панель открыта</b>\n<i>• Выберите действие из меню ниже</i></blockquote>", parse_mode="HTML", reply_markup=get_admin_keyboard())
     await call.answer()
 
