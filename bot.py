@@ -57,8 +57,10 @@ def normalize_url(url: str) -> str:
     return f"https://t.me/{username}"
 
 def init_defaults():
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("start_text", "<b>Текст после нажатия /start:</b>\n\n<blockquote>👋 Добро пожаловать в Krot Free\n\n🌟Мы предоставляем вам бесплатную информация, которую вы нигде больше не найдете.\n\n🤖Проект полностью бесплатен, мы просим вас подписаться на наших спонсоров, после чего вы получите полный доступ к меню и всей информации!</blockquote>"))
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("success_text", "<b>Успешная регистрация</b>\n<i>Доступ к меню открыт</i>"))
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("start_text", "<b>Текст после нажатия /start:</b>\n\n<blockquote>👋 Добро пожаловать в Krot Free\n\n🌟Мы предоставляем вам бесплатную информацию, которую вы нигде больше не найдете.\n\n🤖Проект полностью бесплатен, мы просим вас подписаться на наших спонсоров, после чего вы получите полный доступ к меню и всей информации!</blockquote>"))
+    
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("success_text", "<blockquote><b>✅ ДОСТУП ОТКРЫТ</b>\n\nРегистрация прошла успешно!\n\n🐭 Krot Free полностью разблокирован и готов к работе, вам доступны все мануалы.\n\n👇 Что делать дальше?\n• Вам открылось меню, в котором вы можете выбрать интересную для себя сферу\n• Переходите на любую из кнопок на клавиатуре и начинайте изучать.</blockquote>"))
+    
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("error_text", "<b>Ошибка</b>\n<i>Вы не подписались на все каналы</i>"))
     
     system_defaults = {
@@ -198,8 +200,13 @@ async def start(message: types.Message):
 async def check_subs(call: types.CallbackQuery):
     cursor.execute("SELECT value FROM settings WHERE key='success_text'")
     success_text = cursor.fetchone()[0]
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛟 Поддержка", url="https://t.me/KrotProb")]
+    ])
+    
     await call.message.delete()
-    await call.message.answer(success_text, parse_mode="HTML", reply_markup=get_menu_keyboard())
+    await call.message.answer(success_text, parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
 
 @dp.message(Command("admin"))
