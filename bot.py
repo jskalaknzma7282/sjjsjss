@@ -142,14 +142,14 @@ async def add_reply_start(message: types.Message, state: FSMContext):
 @dp.message(AdminStates.waiting_reply_name)
 async def add_reply_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text)
-    await message.answer("Введите текст (можно с HTML-тегами: <b>жирный</b>, <i>курсив</i>, <blockquote>цитата</blockquote>):")
+    await message.answer("Введите текст (можно с форматированием через меню Telegram):")
     await state.set_state(AdminStates.waiting_reply_content)
 
 @dp.message(AdminStates.waiting_reply_content)
 async def add_reply_content(message: types.Message, state: FSMContext):
     data = await state.get_data()
     name = data["name"]
-    content = message.text
+    content = message.html_text  # Сохраняем форматирование
     try:
         cursor.execute("INSERT INTO menu_buttons (name, content) VALUES (?, ?)", (name, content))
         conn.commit()
@@ -204,14 +204,14 @@ async def edit_reply_select(message: types.Message, state: FSMContext):
         await state.clear()
         return
     await state.update_data(edit_name=message.text)
-    await message.answer("Введите новый текст (можно с HTML-тегами: <b>жирный</b>, <i>курсив</i>, <blockquote>цитата</blockquote>):")
+    await message.answer("Введите новый текст (можно с форматированием через меню Telegram):")
     await state.set_state(AdminStates.waiting_reply_edit_content)
 
 @dp.message(AdminStates.waiting_reply_edit_content)
 async def edit_reply_content(message: types.Message, state: FSMContext):
     data = await state.get_data()
     name = data["edit_name"]
-    content = message.text
+    content = message.html_text  # Сохраняем форматирование
     cursor.execute("UPDATE menu_buttons SET content=? WHERE name=?", (content, name))
     conn.commit()
     await message.answer(f"Текст reply кнопки '{name}' обновлен!", reply_markup=get_admin_keyboard())
@@ -315,12 +315,12 @@ async def edit_subs_new_url(message: types.Message, state: FSMContext):
 async def edit_start_text_start(message: types.Message, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='start_text'")
     current = cursor.fetchone()[0]
-    await message.answer(f"Текущий текст:\n{current}\n\nВведите новый текст (можно с HTML-тегами):")
+    await message.answer(f"Текущий текст:\n{current}\n\nВведите новый текст (можно с форматированием через меню Telegram):")
     await state.set_state(AdminStates.waiting_start_text)
 
 @dp.message(AdminStates.waiting_start_text)
 async def edit_start_text_save(message: types.Message, state: FSMContext):
-    cursor.execute("UPDATE settings SET value=? WHERE key='start_text'", (message.text,))
+    cursor.execute("UPDATE settings SET value=? WHERE key='start_text'", (message.html_text,))  # Сохраняем форматирование
     conn.commit()
     await message.answer("Текст /start обновлен!", reply_markup=get_admin_keyboard())
     await state.clear()
@@ -329,12 +329,12 @@ async def edit_start_text_save(message: types.Message, state: FSMContext):
 async def edit_success_text_start(message: types.Message, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='success_text'")
     current = cursor.fetchone()[0]
-    await message.answer(f"Текущий текст:\n{current}\n\nВведите новый текст (можно с HTML-тегами):")
+    await message.answer(f"Текущий текст:\n{current}\n\nВведите новый текст (можно с форматированием через меню Telegram):")
     await state.set_state(AdminStates.waiting_success_text)
 
 @dp.message(AdminStates.waiting_success_text)
 async def edit_success_text_save(message: types.Message, state: FSMContext):
-    cursor.execute("UPDATE settings SET value=? WHERE key='success_text'", (message.text,))
+    cursor.execute("UPDATE settings SET value=? WHERE key='success_text'", (message.html_text,))  # Сохраняем форматирование
     conn.commit()
     await message.answer("Текст успеха обновлен!", reply_markup=get_admin_keyboard())
     await state.clear()
