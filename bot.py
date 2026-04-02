@@ -52,18 +52,13 @@ async def init_db():
         )
     """)
     
-    # Проверяем и добавляем недостающие колонки
-    try:
-        await conn.execute("ALTER TABLE menu_buttons ADD COLUMN IF NOT EXISTS name TEXT")
-        await conn.execute("ALTER TABLE menu_buttons ADD COLUMN IF NOT EXISTS content TEXT")
-        await conn.execute("ALTER TABLE subs_buttons ADD COLUMN IF NOT EXISTS name TEXT")
-        await conn.execute("ALTER TABLE subs_buttons ADD COLUMN IF NOT EXISTS url TEXT")
-        await conn.execute("ALTER TABLE settings ADD COLUMN IF NOT EXISTS key TEXT")
-        await conn.execute("ALTER TABLE settings ADD COLUMN IF NOT EXISTS value TEXT")
-        await conn.execute("ALTER TABLE system_messages ADD COLUMN IF NOT EXISTS key TEXT")
-        await conn.execute("ALTER TABLE system_messages ADD COLUMN IF NOT EXISTS value TEXT")
-    except Exception as e:
-        logging.warning(f"Column check warning: {e}")
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            capcha_passed BOOLEAN DEFAULT FALSE,
+            registered_at TIMESTAMP DEFAULT NOW()
+        )
+    """)
     
     await conn.close()
 
@@ -229,17 +224,49 @@ class EditStates(StatesGroup):
     waiting_text = State()
     waiting_system = State()
 
+async def check_subscriptions(user_id: int) -> bool:
+    conn = await get_conn()
+    rows = await conn.fetch("SELECT url FROM subs_buttons ORDER BY id")
+    await conn.close()
+    
+    for row in rows:
+        url = row["url"]
+        # Извлекаем username из ссылки
+        if "t.me/" in url:
+            username = url.split("t.me/")[-1]
+            try:
+                chat_member = await bot.get_chat_member(chat_id=f"@{username}", user_id=user_id)
+                if chat_member.status in ["left", "kicked"]:
+                    return False
+            except:
+                return False
+    return True
+
 @dp.message(Command("start"))
 async def start(message: types.Message, state: FSMContext):
-    correct_emoji = random.choice(CAPCHA_EMOJIS)
-    keyboard = get_capcha_keyboard(correct_emoji)
+    user_id = message.from_user.id
     
-    await state.set_state(CapchaStates.waiting_capcha)
-    await state.update_data(correct_emoji=correct_emoji)
+    # Проверяем, проходил ли пользователь капчу
+    conn = await get_conn()
+    user = await conn.fetchrow("SELECT capcha_passed FROM users WHERE user_id=$1", user_id)
     
-    capcha_text = f"<blockquote><b>🔐 Проверка</b>\n<i>• Выберите смайл: {correct_emoji}</i>\n<i>• Нажмите на кнопку с этим смайлом</i>\n<i>• Это защита от ботов</i></blockquote>"
-    
-    await message.answer(capcha_text, parse_mode="HTML", reply_markup=keyboard)
+    if user and user["capcha_passed"]:
+        # Капча уже пройдена, сразу показываем приветствие и подписки
+        start_text = await conn.fetchval("SELECT value FROM settings WHERE key='start_text'")
+        await conn.close()
+        await message.answer(start_text, parse_mode="HTML", reply_markup=await get_subs_keyboard())
+    else:
+        await conn.close()
+        # Показываем капчу
+        correct_emoji = random.choice(CAPCHA_EMOJIS)
+        keyboard = get_capcha_keyboard(correct_emoji)
+        
+        await state.set_state(CapchaStates.waiting_capcha)
+        await state.update_data(correct_emoji=correct_emoji)
+        
+        capcha_text = f"<blockquote><b>🔐 Проверка</b>\n<i>• Выберите смайл: {correct_emoji}</i>\n<i>• Нажмите на кнопку с этим смайлом</i>\n<i>• Это защита от ботов</i></blockquote>"
+        
+        await message.answer(capcha_text, parse_mode="HTML", reply_markup=keyboard)
 
 @dp.callback_query(lambda call: call.data.startswith("capcha_"), CapchaStates.waiting_capcha)
 async def check_capcha(call: types.CallbackQuery, state: FSMContext):
@@ -248,7 +275,10 @@ async def check_capcha(call: types.CallbackQuery, state: FSMContext):
     correct_emoji = data.get("correct_emoji")
     
     if selected_emoji == correct_emoji:
+        # Сохраняем, что капча пройдена
         conn = await get_conn()
+        await conn.execute("INSERT INTO users (user_id, capcha_passed) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET capcha_passed=$2", 
+                          call.from_user.id, True)
         start_text = await conn.fetchval("SELECT value FROM settings WHERE key='start_text'")
         await conn.close()
         
@@ -265,6 +295,17 @@ async def check_capcha(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(lambda call: call.data == "check_subs")
 async def check_subs(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    
+    # Проверяем подписки
+    subscribed = await check_subscriptions(user_id)
+    
+    if not subscribed:
+        # Не подписан - показываем alert
+        await call.answer("❌ Вы не подписались на все каналы! Подпишитесь и нажмите снова.", show_alert=True)
+        return
+    
+    # Подписан - открываем доступ
     conn = await get_conn()
     success_text = await conn.fetchval("SELECT value FROM settings WHERE key='success_text'")
     await conn.close()
@@ -411,12 +452,10 @@ async def reply_delete_save(message: types.Message, state: FSMContext):
             name = row["name"]
             await conn.execute("DELETE FROM menu_buttons WHERE id=$1", btn_id)
             await message.answer((await get_system_message("Удалено: {name}")).replace("{name}", name), parse_mode="HTML")
-            # Продолжаем оставаться в режиме удаления
-            await reply_delete_start(message, state)
         else:
             await message.answer(await get_system_message("Ошибка"), parse_mode="HTML")
-            await reply_delete_start(message, state)
         await conn.close()
+        await reply_delete_start(message, state)
     except ValueError:
         await message.answer(await get_system_message("Ошибка"), parse_mode="HTML")
         await reply_delete_start(message, state)
@@ -532,7 +571,6 @@ async def inline_delete_save(message: types.Message, state: FSMContext):
         else:
             await message.answer(await get_system_message("Ошибка"), parse_mode="HTML")
         await conn.close()
-        # Продолжаем оставаться в режиме удаления
         await inline_delete_start(message, state)
     except ValueError:
         await message.answer(await get_system_message("Ошибка"), parse_mode="HTML")
