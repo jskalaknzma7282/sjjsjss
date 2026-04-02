@@ -178,27 +178,19 @@ def get_system_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 class EditStates(StatesGroup):
-    # Reply добавление
     waiting_reply_add_name = State()
     waiting_reply_add_text = State()
-    # Reply удаление
     waiting_reply_delete_id = State()
-    # Reply редактирование
     waiting_reply_edit_name = State()
     waiting_reply_edit_text = State()
     waiting_reply_edit_id = State()
-    # Инлайн добавление
     waiting_inline_add_name = State()
     waiting_inline_add_url = State()
-    # Инлайн удаление
     waiting_inline_delete_id = State()
-    # Инлайн редактирование
     waiting_inline_edit_name = State()
     waiting_inline_edit_url = State()
     waiting_inline_edit_id = State()
-    # Тексты
     waiting_text = State()
-    # Системные
     waiting_system = State()
 
 @dp.message(Command("start"))
@@ -243,7 +235,7 @@ async def settings_menu(message: types.Message):
 
 @dp.message(lambda message: message.text == "Системные сообщения")
 async def system_messages_menu(message: types.Message):
-    await message.answer("<b>Системные сообщения</b>, parse_mode="HTML", reply_markup=get_system_keyboard())
+    await message.answer("<b>Системные сообщения</b>", parse_mode="HTML", reply_markup=get_system_keyboard())
 
 @dp.message(lambda message: message.text == "Назад")
 async def back_to_admin(message: types.Message):
@@ -255,7 +247,7 @@ async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
     btn_id = int(call.data.split("_")[2])
     cursor.execute("SELECT name, content FROM menu_buttons WHERE id=?", (btn_id,))
     name, content = cursor.fetchone()
-    await state.update_data(reply_edit_id=btn_id)
+    await state.update_data(waiting_reply_edit_id=btn_id)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Изменить название", callback_data="reply_change_name")],
         [InlineKeyboardButton(text="Изменить текст", callback_data="reply_change_text")],
@@ -279,7 +271,7 @@ async def reply_change_text(call: types.CallbackQuery, state: FSMContext):
 @dp.message(EditStates.waiting_reply_edit_name)
 async def reply_save_edit_name(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    btn_id = data["reply_edit_id"]
+    btn_id = data["waiting_reply_edit_id"]
     new_name = message.text
     cursor.execute("UPDATE menu_buttons SET name=? WHERE id=?", (new_name, btn_id))
     conn.commit()
@@ -290,7 +282,7 @@ async def reply_save_edit_name(message: types.Message, state: FSMContext):
 @dp.message(EditStates.waiting_reply_edit_text)
 async def reply_save_edit_text(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    btn_id = data["reply_edit_id"]
+    btn_id = data["waiting_reply_edit_id"]
     new_text = message.html_text
     cursor.execute("UPDATE menu_buttons SET content=? WHERE id=?", (new_text, btn_id))
     conn.commit()
@@ -307,14 +299,14 @@ async def reply_add_start(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_reply_add_name)
 async def reply_add_name(message: types.Message, state: FSMContext):
-    await state.update_data(reply_add_name=message.text)
+    await state.update_data(waiting_reply_add_name=message.text)
     await message.answer(get_system_message("Текст:"), parse_mode="HTML")
     await state.set_state(EditStates.waiting_reply_add_text)
 
 @dp.message(EditStates.waiting_reply_add_text)
 async def reply_add_text(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    name = data["reply_add_name"]
+    name = data["waiting_reply_add_name"]
     text = message.html_text
     cursor.execute("INSERT INTO menu_buttons (name, content) VALUES (?, ?)", (name, text))
     conn.commit()
@@ -363,7 +355,7 @@ async def inline_edit_select(call: types.CallbackQuery, state: FSMContext):
     btn_id = int(call.data.split("_")[2])
     cursor.execute("SELECT name, url FROM subs_buttons WHERE id=?", (btn_id,))
     name, url = cursor.fetchone()
-    await state.update_data(inline_edit_id=btn_id)
+    await state.update_data(waiting_inline_edit_id=btn_id)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Изменить название", callback_data="inline_change_name")],
         [InlineKeyboardButton(text="Изменить ссылку", callback_data="inline_change_url")],
@@ -387,7 +379,7 @@ async def inline_change_url(call: types.CallbackQuery, state: FSMContext):
 @dp.message(EditStates.waiting_inline_edit_name)
 async def inline_save_edit_name(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    btn_id = data["inline_edit_id"]
+    btn_id = data["waiting_inline_edit_id"]
     new_name = message.text
     cursor.execute("UPDATE subs_buttons SET name=? WHERE id=?", (new_name, btn_id))
     conn.commit()
@@ -398,7 +390,7 @@ async def inline_save_edit_name(message: types.Message, state: FSMContext):
 @dp.message(EditStates.waiting_inline_edit_url)
 async def inline_save_edit_url(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    btn_id = data["inline_edit_id"]
+    btn_id = data["waiting_inline_edit_id"]
     new_url = normalize_url(message.text)
     cursor.execute("UPDATE subs_buttons SET url=? WHERE id=?", (new_url, btn_id))
     conn.commit()
@@ -415,14 +407,14 @@ async def inline_add_start(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(EditStates.waiting_inline_add_name)
 async def inline_add_name(message: types.Message, state: FSMContext):
-    await state.update_data(inline_add_name=message.text)
+    await state.update_data(waiting_inline_add_name=message.text)
     await message.answer(get_system_message("Ссылка:"), parse_mode="HTML")
     await state.set_state(EditStates.waiting_inline_add_url)
 
 @dp.message(EditStates.waiting_inline_add_url)
 async def inline_add_url(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    name = data["inline_add_name"]
+    name = data["waiting_inline_add_name"]
     url = normalize_url(message.text)
     cursor.execute("INSERT INTO subs_buttons (name, url) VALUES (?, ?)", (name, url))
     conn.commit()
