@@ -195,9 +195,7 @@ class EditStates(StatesGroup):
 
 @dp.message(Command("start"))
 async def start(message: types.Message, state: FSMContext):
-    cursor.execute("SELECT value FROM settings WHERE key='start_text'")
-    start_text = cursor.fetchone()[0]
-    
+    # Сначала капча
     correct_emoji = random.choice(CAPCHA_EMOJIS)
     keyboard = get_capcha_keyboard(correct_emoji)
     
@@ -206,7 +204,6 @@ async def start(message: types.Message, state: FSMContext):
     
     capcha_text = f"<blockquote><b>🔐 Проверка</b>\n<i>• Выберите смайл: {correct_emoji}</i>\n<i>• Нажмите на кнопку с этим смайлом</i>\n<i>• Это защита от ботов</i></blockquote>"
     
-    await message.answer(start_text, parse_mode="HTML", reply_markup=get_subs_keyboard())
     await message.answer(capcha_text, parse_mode="HTML", reply_markup=keyboard)
 
 @dp.callback_query(lambda call: call.data.startswith("capcha_"), CapchaStates.waiting_capcha)
@@ -216,10 +213,15 @@ async def check_capcha(call: types.CallbackQuery, state: FSMContext):
     correct_emoji = data.get("correct_emoji")
     
     if selected_emoji == correct_emoji:
+        # Капча пройдена - показываем приветствие и подписки
+        cursor.execute("SELECT value FROM settings WHERE key='start_text'")
+        start_text = cursor.fetchone()[0]
+        
         await call.message.delete()
-        await call.message.answer("<blockquote><b>✅ Капча пройдена</b>\n<i>• Теперь подпишитесь на каналы</i></blockquote>", parse_mode="HTML")
+        await call.message.answer(start_text, parse_mode="HTML", reply_markup=get_subs_keyboard())
         await state.clear()
     else:
+        # Неправильно - новая капча
         new_correct_emoji = random.choice(CAPCHA_EMOJIS)
         keyboard = get_capcha_keyboard(new_correct_emoji)
         await state.update_data(correct_emoji=new_correct_emoji)
