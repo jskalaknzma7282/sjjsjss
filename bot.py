@@ -267,8 +267,15 @@ async def start(message: types.Message, state: FSMContext):
     
     # Уже прошел капчу и подписан → сразу в меню
     if user and user["capcha_passed"] and subscribed:
+        success_text = await conn.fetchval("SELECT value FROM settings WHERE key='success_text'")
         await conn.close()
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛟 Поддержка", url="https://t.me/KrotProb")]
+        ])
+        
         await message.answer("🔑", reply_markup=await get_menu_keyboard())
+        await message.answer(success_text, parse_mode="HTML", reply_markup=keyboard)
         return
     
     # Прошел капчу, но не подписан → показываем подписки
@@ -324,20 +331,12 @@ async def check_subs(call: types.CallbackQuery):
         await call.answer("❌ Вы не подписались на все каналы! Подпишитесь и нажмите снова.", show_alert=True)
         return
     
-    # Проверяем, не открыт ли уже доступ
     conn = await get_conn()
     user = await conn.fetchrow("SELECT capcha_passed FROM users WHERE user_id=$1", user_id)
     
-    if user and user["capcha_passed"]:
-        # Доступ уже есть, просто показываем меню
-        await call.message.delete()
-        await call.message.answer("🔑", reply_markup=await get_menu_keyboard())
-        await call.answer()
-        await conn.close()
-        return
+    if not user or not user["capcha_passed"]:
+        await conn.execute("UPDATE users SET capcha_passed=$1 WHERE user_id=$2", True, user_id)
     
-    # Первый раз открываем доступ
-    await conn.execute("UPDATE users SET capcha_passed=$1 WHERE user_id=$2", True, user_id)
     success_text = await conn.fetchval("SELECT value FROM settings WHERE key='success_text'")
     await conn.close()
     
@@ -347,7 +346,6 @@ async def check_subs(call: types.CallbackQuery):
     
     await call.message.delete()
     await call.message.answer("🔑", reply_markup=await get_menu_keyboard())
-    await asyncio.sleep(1)
     await call.message.answer(success_text, parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
 
