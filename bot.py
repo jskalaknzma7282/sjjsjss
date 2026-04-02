@@ -30,7 +30,8 @@ async def init_db():
             content TEXT,
             inline_button_text TEXT,
             inline_button_url TEXT,
-            photo_id TEXT
+            photo_id TEXT,
+            format_type TEXT DEFAULT 'plain'
         )
     """)
     
@@ -78,6 +79,11 @@ async def init_db():
     
     try:
         await conn.execute("ALTER TABLE menu_buttons ADD COLUMN IF NOT EXISTS photo_id TEXT")
+    except Exception:
+        pass
+    
+    try:
+        await conn.execute("ALTER TABLE menu_buttons ADD COLUMN IF NOT EXISTS format_type TEXT DEFAULT 'plain'")
     except Exception:
         pass
     
@@ -155,7 +161,7 @@ async def init_defaults():
     count = await conn.fetchval("SELECT COUNT(*) FROM menu_buttons")
     if count == 0:
         for i in range(1, 6):
-            await conn.execute("INSERT INTO menu_buttons (name, content) VALUES ($1, $2)", str(i), f"<blockquote>Текст для кнопки {i}</blockquote>")
+            await conn.execute("INSERT INTO menu_buttons (name, content) VALUES ($1, $2)", str(i), f"Текст для кнопки {i}")
     
     await conn.close()
 
@@ -186,7 +192,7 @@ async def get_subs_keyboard():
             row = []
     if row:
         buttons.append(row)
-    buttons.append([InlineKeyboardButton(text="Проверить", callback_data="check_subs")])
+    buttons.append([InlineKeyboardButton(text="✅ Проверить", callback_data="check_subs")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_admin_keyboard():
@@ -260,6 +266,7 @@ class EditStates(StatesGroup):
     waiting_reply_inline_text = State()
     waiting_reply_inline_url = State()
     waiting_reply_photo = State()
+    waiting_reply_format = State()
     waiting_text_photo = State()
     waiting_text_key = State()
     waiting_inline_add_name = State()
@@ -373,7 +380,7 @@ async def check_subs(call: types.CallbackQuery):
     subscribed = await check_subscriptions(user_id)
     
     if not subscribed:
-        await call.answer("Вы не подписались на все каналы! Подпишитесь и нажмите снова.", show_alert=True)
+        await call.answer("❌ Вы не подписались на все каналы! Подпишитесь и нажмите снова.", show_alert=True)
         return
     
     conn = await get_conn()
@@ -445,7 +452,7 @@ async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
         return
     btn_id = int(call.data.split("_")[2])
     conn = await get_conn()
-    row = await conn.fetchrow("SELECT id, name, content, inline_button_text, inline_button_url, photo_id FROM menu_buttons WHERE id=$1", btn_id)
+    row = await conn.fetchrow("SELECT id, name, content, inline_button_text, inline_button_url, photo_id, format_type FROM menu_buttons WHERE id=$1", btn_id)
     await conn.close()
     await state.update_data(waiting_reply_edit_id=btn_id)
     
@@ -455,20 +462,57 @@ async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
     
     photo_info = "\n<b>• Фото:</b> есть" if row["photo_id"] else "\n<b>• Фото:</b> нет"
     
+    format_display = "Обычный"
+    if row["format_type"] == "quote":
+        format_display = "Цитата"
+    elif row["format_type"] == "custom":
+        format_display = "Свой формат"
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Изменить название", callback_data="reply_change_name"), InlineKeyboardButton(text="Изменить текст", callback_data="reply_change_text")],
+        [InlineKeyboardButton(text=f"Формат: {format_display}", callback_data="reply_change_format")],
         [InlineKeyboardButton(text="Изменить фото", callback_data="reply_change_photo")],
         [InlineKeyboardButton(text="Добавить инлайн-кнопку", callback_data="reply_add_inline")],
         [InlineKeyboardButton(text="Назад", callback_data="back_to_reply")]
     ])
     
     if row["inline_button_text"] and row["inline_button_url"]:
-        keyboard.inline_keyboard.insert(3, [InlineKeyboardButton(text="Удалить инлайн-кнопку", callback_data="reply_remove_inline")])
+        keyboard.inline_keyboard.insert(4, [InlineKeyboardButton(text="Удалить инлайн-кнопку", callback_data="reply_remove_inline")])
     
     if row["photo_id"]:
-        keyboard.inline_keyboard.insert(2, [InlineKeyboardButton(text="Удалить фото", callback_data="reply_remove_photo")])
+        keyboard.inline_keyboard.insert(3, [InlineKeyboardButton(text="Удалить фото", callback_data="reply_remove_photo")])
     
-    await call.message.edit_text(f"<blockquote><b>Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущий текст:</b> <code>{row['content']}</code>{photo_info}{inline_info}\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+    await call.message.edit_text(f"<blockquote><b>Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущий текст:</b> <code>{row['content']}</code>\n<b>• Формат:</b> {format_display}{photo_info}{inline_info}\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+    await call.answer()
+
+@dp.callback_query(lambda call: call.data == "reply_change_format")
+async def reply_change_format(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Обычный текст", callback_data="reply_format_plain")],
+        [InlineKeyboardButton(text="Цитата", callback_data="reply_format_quote")],
+        [InlineKeyboardButton(text="Свой формат (HTML)", callback_data="reply_format_custom")],
+        [InlineKeyboardButton(text="Назад", callback_data="back_to_reply_edit")]
+    ])
+    await call.message.edit_text("<blockquote><b>Выберите формат отправки</b>\n<i>• Обычный текст — без оформления</i>\n<i>• Цитата — текст в blockquote</i>\n<i>• Свой формат — используйте HTML-теги или форматирование через Telegram</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+    await call.answer()
+
+@dp.callback_query(lambda call: call.data.startswith("reply_format_"))
+async def reply_save_format(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS:
+        await call.answer("Доступ запрещен", show_alert=True)
+        return
+    format_type = call.data.split("_")[2]
+    data = await state.get_data()
+    btn_id = data.get("waiting_reply_edit_id")
+    if btn_id:
+        conn = await get_conn()
+        await conn.execute("UPDATE menu_buttons SET format_type=$1 WHERE id=$2", format_type, btn_id)
+        await conn.close()
+        await call.answer(f"Формат изменен")
+        await reply_edit_select(call, state)
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "reply_change_photo")
@@ -604,7 +648,7 @@ async def back_to_reply_edit(call: types.CallbackQuery, state: FSMContext):
     btn_id = data.get("waiting_reply_edit_id")
     if btn_id:
         conn = await get_conn()
-        row = await conn.fetchrow("SELECT id, name, content, inline_button_text, inline_button_url, photo_id FROM menu_buttons WHERE id=$1", btn_id)
+        row = await conn.fetchrow("SELECT id, name, content, inline_button_text, inline_button_url, photo_id, format_type FROM menu_buttons WHERE id=$1", btn_id)
         await conn.close()
         
         inline_info = ""
@@ -613,20 +657,27 @@ async def back_to_reply_edit(call: types.CallbackQuery, state: FSMContext):
         
         photo_info = "\n<b>• Фото:</b> есть" if row["photo_id"] else "\n<b>• Фото:</b> нет"
         
+        format_display = "Обычный"
+        if row["format_type"] == "quote":
+            format_display = "Цитата"
+        elif row["format_type"] == "custom":
+            format_display = "Свой формат"
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Изменить название", callback_data="reply_change_name"), InlineKeyboardButton(text="Изменить текст", callback_data="reply_change_text")],
+            [InlineKeyboardButton(text=f"Формат: {format_display}", callback_data="reply_change_format")],
             [InlineKeyboardButton(text="Изменить фото", callback_data="reply_change_photo")],
             [InlineKeyboardButton(text="Добавить инлайн-кнопку", callback_data="reply_add_inline")],
             [InlineKeyboardButton(text="Назад", callback_data="back_to_reply")]
         ])
         
         if row["inline_button_text"] and row["inline_button_url"]:
-            keyboard.inline_keyboard.insert(3, [InlineKeyboardButton(text="Удалить инлайн-кнопку", callback_data="reply_remove_inline")])
+            keyboard.inline_keyboard.insert(4, [InlineKeyboardButton(text="Удалить инлайн-кнопку", callback_data="reply_remove_inline")])
         
         if row["photo_id"]:
-            keyboard.inline_keyboard.insert(2, [InlineKeyboardButton(text="Удалить фото", callback_data="reply_remove_photo")])
+            keyboard.inline_keyboard.insert(3, [InlineKeyboardButton(text="Удалить фото", callback_data="reply_remove_photo")])
         
-        await call.message.edit_text(f"<blockquote><b>Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущий текст:</b> <code>{row['content']}</code>{photo_info}{inline_info}\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+        await call.message.edit_text(f"<blockquote><b>Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{row['name']}</code>\n<b>• Текущий текст:</b> <code>{row['content']}</code>\n<b>• Формат:</b> {format_display}{photo_info}{inline_info}\n\n<i>• Что хотите изменить?</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
     await state.set_state(None)
     await call.answer()
 
@@ -650,7 +701,8 @@ async def reply_save_edit_text(message: types.Message, state: FSMContext):
         return
     data = await state.get_data()
     btn_id = data["waiting_reply_edit_id"]
-    new_text = f"<blockquote>{message.html_text}</blockquote>"
+    # Сохраняем текст как есть, без автоматического blockquote
+    new_text = message.html_text
     conn = await get_conn()
     await conn.execute("UPDATE menu_buttons SET content=$1 WHERE id=$2", new_text, btn_id)
     await conn.close()
@@ -699,7 +751,7 @@ async def reply_add_text(message: types.Message, state: FSMContext):
         return
     data = await state.get_data()
     name = data["waiting_reply_add_name"]
-    text = f"<blockquote>{message.html_text}</blockquote>"
+    text = message.html_text  # Сохраняем как есть, без blockquote
     conn = await get_conn()
     await conn.execute("INSERT INTO menu_buttons (name, content) VALUES ($1, $2)", name, text)
     await conn.close()
@@ -1135,7 +1187,7 @@ async def save_text(message: types.Message, state: FSMContext):
         return
     data = await state.get_data()
     text_key = data["text_key"]
-    new_text = f"<blockquote>{message.html_text}</blockquote>"
+    new_text = message.html_text  # Сохраняем как есть, без автоматического blockquote
     conn = await get_conn()
     await conn.execute("UPDATE settings SET value=$1 WHERE key=$2", new_text, text_key)
     
@@ -1261,7 +1313,7 @@ async def back_to_admin_callback(call: types.CallbackQuery):
 @dp.message(lambda message: True)
 async def handle_menu_buttons(message: types.Message):
     conn = await get_conn()
-    row = await conn.fetchrow("SELECT content, inline_button_text, inline_button_url, photo_id FROM menu_buttons WHERE name=$1", message.text)
+    row = await conn.fetchrow("SELECT content, inline_button_text, inline_button_url, photo_id, format_type FROM menu_buttons WHERE name=$1", message.text)
     await conn.close()
     if row:
         keyboard = None
@@ -1270,10 +1322,26 @@ async def handle_menu_buttons(message: types.Message):
                 [InlineKeyboardButton(text=row["inline_button_text"], url=row["inline_button_url"])]
             ])
         
+        content = row["content"]
+        format_type = row["format_type"] if row["format_type"] else "plain"
+        
+        # Применяем формат только если он выбран
+        if format_type == "quote":
+            # Оборачиваем в цитату, если еще не обернуто
+            if not (content.startswith("<blockquote>") and content.endswith("</blockquote>")):
+                content = f"<blockquote>{content}</blockquote>"
+        elif format_type == "custom":
+            # Оставляем как есть (админ сам использовал HTML)
+            pass
+        else:  # plain
+            # Убираем blockquote если был (на случай если админ передумал)
+            if content.startswith("<blockquote>") and content.endswith("</blockquote>"):
+                content = content[12:-13]
+        
         if row["photo_id"]:
-            await message.answer_photo(photo=row["photo_id"], caption=row["content"], parse_mode="HTML", reply_markup=keyboard)
+            await message.answer_photo(photo=row["photo_id"], caption=content, parse_mode="HTML", reply_markup=keyboard)
         else:
-            await message.answer(row["content"], parse_mode="HTML", reply_markup=keyboard)
+            await message.answer(content, parse_mode="HTML", reply_markup=keyboard)
 
 async def main():
     await init_db()
