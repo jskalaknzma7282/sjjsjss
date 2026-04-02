@@ -118,7 +118,7 @@ def get_subs_keyboard():
 def get_admin_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Reply кнопки", callback_data="admin_reply"), InlineKeyboardButton(text="🔗 Инлайн кнопки", callback_data="admin_inline")],
-        [InlineKeyboardButton(text="📝 Тексты", callback_data="admin_texts"), InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="📝 Тексты", callback_data="admin_texts")],
         [InlineKeyboardButton(text="🚪 Выйти", callback_data="admin_exit")]
     ])
 
@@ -162,25 +162,6 @@ def get_texts_keyboard():
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin")]
     ])
 
-def get_system_keyboard():
-    system_keys = [
-        "Название:", "Ссылка:",
-        "Новое название:", "Новая ссылка:",
-        "Добавлено: {name}", "Удалено: {name}", "Изменено: {name}",
-        "Нет кнопок", "Ошибка", "Выберите:", "Введите ID:"
-    ]
-    keyboard = []
-    row = []
-    for key in system_keys:
-        row.append(InlineKeyboardButton(text=key[:30], callback_data=f"system_{key.replace(' ', '_').replace('{', '').replace('}', '')}"))
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin")])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
 class EditStates(StatesGroup):
     waiting_reply_add_name = State()
     waiting_reply_add_text = State()
@@ -214,31 +195,26 @@ async def check_subs(call: types.CallbackQuery):
     
     await call.message.delete()
     await call.message.answer(success_text, parse_mode="HTML", reply_markup=keyboard)
-    await call.message.answer("<b>📋 Меню открыто</b>\n<i>• Выберите интересующий раздел</i>", parse_mode="HTML", reply_markup=get_menu_keyboard())
+    await call.message.answer(reply_markup=get_menu_keyboard())
     await call.answer()
 
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
-    await message.answer("<b>🔐 Админ панель открыта</b>\n<i>• Выберите действие</i>", parse_mode="HTML", reply_markup=get_admin_keyboard())
+    await message.answer("<blockquote><b>🔐 Админ панель открыта</b>\n<i>• Выберите действие из меню ниже</i>\n<i>• Нажмите на нужную кнопку для управления</i>\n<i>• Кнопка \"Назад\" вернет вас в главное меню</i></blockquote>", parse_mode="HTML", reply_markup=get_admin_keyboard())
 
 @dp.callback_query(lambda call: call.data == "admin_reply")
 async def admin_reply(call: types.CallbackQuery):
-    await call.message.edit_text("<b>📋 Управление reply кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку для изменения</i>", parse_mode="HTML", reply_markup=get_reply_list_keyboard())
+    await call.message.edit_text("<blockquote><b>📋 Управление reply кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку, чтобы изменить название или текст</i>\n<i>• Используйте кнопки + Добавить и - Удалить</i></blockquote>", parse_mode="HTML", reply_markup=get_reply_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "admin_inline")
 async def admin_inline(call: types.CallbackQuery):
-    await call.message.edit_text("<b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку для изменения</i>", parse_mode="HTML", reply_markup=get_inline_list_keyboard())
+    await call.message.edit_text("<blockquote><b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку, чтобы изменить название или ссылку</i>\n<i>• Используйте кнопки + Добавить и - Удалить</i></blockquote>", parse_mode="HTML", reply_markup=get_inline_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "admin_texts")
 async def admin_texts(call: types.CallbackQuery):
-    await call.message.edit_text("<b>📝 Редактирование текстов</b>\n<i>• Выберите текст для изменения</i>\n<i>• Можно использовать HTML-теги</i>", parse_mode="HTML", reply_markup=get_texts_keyboard())
-    await call.answer()
-
-@dp.callback_query(lambda call: call.data == "admin_settings")
-async def admin_settings(call: types.CallbackQuery):
-    await call.message.edit_text("<b>⚙️ Системные настройки</b>\n<i>• Выберите сообщение для редактирования</i>\n<i>• Изменения вступят в силу сразу</i>", parse_mode="HTML", reply_markup=get_system_keyboard())
+    await call.message.edit_text("<blockquote><b>📝 Редактирование текстов</b>\n<i>• Выберите текст для изменения</i>\n<i>• Можно использовать HTML-теги</i>\n<i>• Изменения вступят в силу сразу</i></blockquote>", parse_mode="HTML", reply_markup=get_texts_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "admin_exit")
@@ -257,7 +233,7 @@ async def reply_edit_select(call: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="✏️ Изменить название", callback_data="reply_change_name"), InlineKeyboardButton(text="📝 Изменить текст", callback_data="reply_change_text")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_reply")]
     ])
-    await call.message.edit_text(f"<b>📋 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{name}</code>\n<b>• Текущий текст:</b> <code>{content}</code>\n\n<i>• Что хотите изменить?</i>\n<i>• Нажмите на соответствующую кнопку</i>", parse_mode="HTML", reply_markup=keyboard)
+    await call.message.edit_text(f"<blockquote><b>📋 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{name}</code>\n<b>• Текущий текст:</b> <code>{content}</code>\n\n<i>• Что хотите изменить?</i>\n<i>• Нажмите на соответствующую кнопку</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "reply_change_name")
@@ -362,7 +338,7 @@ async def inline_edit_select(call: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="✏️ Изменить название", callback_data="inline_change_name"), InlineKeyboardButton(text="🔗 Изменить ссылку", callback_data="inline_change_url")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_inline")]
     ])
-    await call.message.edit_text(f"<b>🔗 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{name}</code>\n<b>• Текущая ссылка:</b> <code>{url}</code>\n\n<i>• Что хотите изменить?</i>\n<i>• Нажмите на соответствующую кнопку</i>", parse_mode="HTML", reply_markup=keyboard)
+    await call.message.edit_text(f"<blockquote><b>🔗 Редактирование кнопки</b>\n\n<b>• Текущее название:</b> <code>{name}</code>\n<b>• Текущая ссылка:</b> <code>{url}</code>\n\n<i>• Что хотите изменить?</i>\n<i>• Нажмите на соответствующую кнопку</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "inline_change_name")
@@ -462,7 +438,7 @@ async def edit_start_text(call: types.CallbackQuery, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='start_text'")
     current = cursor.fetchone()[0]
     await state.update_data(text_key="start_text")
-    await call.message.edit_text(f"<b>📝 Текущий текст приветствия</b>\n<code>{current}</code>\n\n<i>• Введите новый текст</i>\n<i>• Поддерживается HTML-форматирование</i>", parse_mode="HTML")
+    await call.message.edit_text(f"<blockquote><b>📝 Текущий текст приветствия</b>\n<code>{current}</code>\n\n<i>• Введите новый текст</i>\n<i>• Поддерживается HTML-форматирование</i></blockquote>", parse_mode="HTML")
     await state.set_state(EditStates.waiting_text)
     await call.answer()
 
@@ -471,7 +447,7 @@ async def edit_success_text(call: types.CallbackQuery, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='success_text'")
     current = cursor.fetchone()[0]
     await state.update_data(text_key="success_text")
-    await call.message.edit_text(f"<b>✅ Текущий текст успеха</b>\n<code>{current}</code>\n\n<i>• Введите новый текст</i>\n<i>• Поддерживается HTML-форматирование</i>", parse_mode="HTML")
+    await call.message.edit_text(f"<blockquote><b>✅ Текущий текст успеха</b>\n<code>{current}</code>\n\n<i>• Введите новый текст</i>\n<i>• Поддерживается HTML-форматирование</i></blockquote>", parse_mode="HTML")
     await state.set_state(EditStates.waiting_text)
     await call.answer()
 
@@ -480,7 +456,7 @@ async def edit_error_text(call: types.CallbackQuery, state: FSMContext):
     cursor.execute("SELECT value FROM settings WHERE key='error_text'")
     current = cursor.fetchone()[0]
     await state.update_data(text_key="error_text")
-    await call.message.edit_text(f"<b>❌ Текущий текст ошибки</b>\n<code>{current}</code>\n\n<i>• Введите новый текст</i>\n<i>• Поддерживается HTML-форматирование</i>", parse_mode="HTML")
+    await call.message.edit_text(f"<blockquote><b>❌ Текущий текст ошибки</b>\n<code>{current}</code>\n\n<i>• Введите новый текст</i>\n<i>• Поддерживается HTML-форматирование</i></blockquote>", parse_mode="HTML")
     await state.set_state(EditStates.waiting_text)
     await call.answer()
 
@@ -491,70 +467,24 @@ async def save_text(message: types.Message, state: FSMContext):
     new_text = f"<blockquote>{message.html_text}</blockquote>"
     cursor.execute("UPDATE settings SET value=? WHERE key=?", (new_text, text_key))
     conn.commit()
-    await message.answer("<b>✅ Сохранено</b>\n<i>• Новый текст сохранен</i>\n<i>• Изменения вступят в силу сразу</i>", parse_mode="HTML")
+    await message.answer("<blockquote><b>✅ Сохранено</b>\n<i>• Новый текст сохранен</i>\n<i>• Изменения вступят в силу сразу</i></blockquote>", parse_mode="HTML")
     await state.clear()
     await admin_texts(message)
-
-# ========== Системные сообщения ==========
-@dp.callback_query(lambda call: call.data.startswith("system_"))
-async def edit_system_message(call: types.CallbackQuery, state: FSMContext):
-    key_raw = call.data.replace("system_", "").replace("_", " ").replace("name", "{name}")
-    if "Добавлено" in key_raw:
-        key = "Добавлено: {name}"
-    elif "Удалено" in key_raw:
-        key = "Удалено: {name}"
-    elif "Изменено" in key_raw:
-        key = "Изменено: {name}"
-    elif "Название" in key_raw and "Новое" not in key_raw:
-        key = "Название:"
-    elif "Ссылка" in key_raw and "Новая" not in key_raw:
-        key = "Ссылка:"
-    elif "Новое название" in key_raw:
-        key = "Новое название:"
-    elif "Новая ссылка" in key_raw:
-        key = "Новая ссылка:"
-    elif "Нет кнопок" in key_raw:
-        key = "Нет кнопок"
-    elif "Ошибка" in key_raw:
-        key = "Ошибка"
-    elif "Выберите" in key_raw:
-        key = "Выберите:"
-    elif "Введите ID" in key_raw:
-        key = "Введите ID:"
-    else:
-        key = key_raw
-    cursor.execute("SELECT value FROM system_messages WHERE key=?", (key,))
-    current = cursor.fetchone()[0]
-    await state.update_data(system_key=key)
-    await call.message.edit_text(f"<b>⚙️ Редактирование сообщения</b>\n\n<b>• Текущий текст:</b>\n<code>{current}</code>\n\n<i>• Введите новый текст</i>\n<i>• Поддерживается HTML-форматирование</i>", parse_mode="HTML")
-    await state.set_state(EditStates.waiting_system)
-    await call.answer()
-
-@dp.message(EditStates.waiting_system)
-async def save_system_message(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    system_key = data["system_key"]
-    new_text = f"<blockquote>{message.html_text}</blockquote>"
-    cursor.execute("UPDATE system_messages SET value=? WHERE key=?", (new_text, system_key))
-    conn.commit()
-    await message.answer("<b>✅ Сохранено</b>\n<i>• Системное сообщение обновлено</i>\n<i>• Изменения вступят в силу сразу</i>", parse_mode="HTML")
-    await state.clear()
-    await admin_settings(message)
 
 # ========== Назад ==========
 @dp.callback_query(lambda call: call.data == "back_to_reply")
 async def back_to_reply(call: types.CallbackQuery):
-    await call.message.edit_text("<b>📋 Управление reply кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку для изменения</i>", parse_mode="HTML", reply_markup=get_reply_list_keyboard())
+    await call.message.edit_text("<blockquote><b>📋 Управление reply кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку для изменения</i>\n<i>• Используйте кнопки + Добавить и - Удалить</i></blockquote>", parse_mode="HTML", reply_markup=get_reply_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "back_to_inline")
 async def back_to_inline(call: types.CallbackQuery):
-    await call.message.edit_text("<b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку для изменения</i>", parse_mode="HTML", reply_markup=get_inline_list_keyboard())
+    await call.message.edit_text("<blockquote><b>🔗 Управление инлайн кнопками</b>\n<i>• Выберите кнопку для редактирования</i>\n<i>• Нажмите на кнопку для изменения</i>\n<i>• Используйте кнопки + Добавить и - Удалить</i></blockquote>", parse_mode="HTML", reply_markup=get_inline_list_keyboard())
     await call.answer()
 
 @dp.callback_query(lambda call: call.data == "back_to_admin")
 async def back_to_admin_callback(call: types.CallbackQuery):
-    await call.message.edit_text("<b>🔐 Админ панель открыта</b>\n<i>• Выберите действие</i>\n<i>• Нажмите на нужную кнопку</i>", parse_mode="HTML", reply_markup=get_admin_keyboard())
+    await call.message.edit_text("<blockquote><b>🔐 Админ панель открыта</b>\n<i>• Выберите действие из меню ниже</i>\n<i>• Нажмите на нужную кнопку для управления</i>\n<i>• Кнопка \"Назад\" вернет вас в главное меню</i></blockquote>", parse_mode="HTML", reply_markup=get_admin_keyboard())
     await call.answer()
 
 # ========== Кнопки пользователя ==========
