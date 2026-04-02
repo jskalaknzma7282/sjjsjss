@@ -57,7 +57,7 @@ def normalize_url(url: str) -> str:
     return f"https://t.me/{username}"
 
 def init_defaults():
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("start_text", "<b>Текст после нажатия /start:</b>\n\n<blockquote>👋 Добро пожаловать в Krot Free\n\n🌟Мы предоставляем вам бесплатную информацию, которую вы нигде больше не найдете.\n\n🤖Проект полностью бесплатен, мы просим вас подписаться на наших спонсоров, после чего вы получите полный доступ к меню и всей информации!</blockquote>"))
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("start_text", "<blockquote>👋 Добро пожаловать в Krot Free\n\n🌟Мы предоставляем вам бесплатную информацию, которую вы нигде больше не найдете.\n\n🤖Проект полностью бесплатен, мы просим вас подписаться на наших спонсоров, после чего вы получите полный доступ к меню и всей информации!</blockquote>"))
     
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("success_text", "<blockquote><b>✅ ДОСТУП ОТКРЫТ</b>\n\nРегистрация прошла успешно!\n\n🐭 Krot Free полностью разблокирован и готов к работе, вам доступны все мануалы.\n\n👇 Что делать дальше?\n• Вам открылось меню, в котором вы можете выбрать интересную для себя сферу\n• Переходите на любую из кнопок на клавиатуре и начинайте изучать.</blockquote>"))
     
@@ -101,8 +101,14 @@ def get_subs_keyboard():
     cursor.execute("SELECT id, name, url FROM subs_buttons ORDER BY id")
     rows = cursor.fetchall()
     buttons = []
+    row = []
     for id, name, url in rows:
-        buttons.append([InlineKeyboardButton(text=name, url=url)])
+        row.append(InlineKeyboardButton(text=name, url=url))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
     buttons.append([InlineKeyboardButton(text="Проверить", callback_data="check_subs")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
