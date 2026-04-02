@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sqlite3
+import random
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -44,6 +45,9 @@ CREATE TABLE IF NOT EXISTS system_messages (
 )
 """)
 conn.commit()
+
+# Список смайлов для капчи
+CAPCHA_EMOJIS = ["🐍", "🐷", "🐥", "🦄", "🦊", "🦋", "🧊", "🔮"]
 
 def normalize_url(url: str) -> str:
     url = url.strip()
@@ -162,6 +166,20 @@ def get_texts_keyboard():
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin")]
     ])
 
+def get_capcha_keyboard(correct_emoji):
+    # Перемешиваем смайлы
+    emojis = CAPCHA_EMOJIS.copy()
+    random.shuffle(emojis)
+    # Создаем кнопки 4x2
+    keyboard = [
+        [InlineKeyboardButton(text=emojis[0], callback_data=f"capcha_{emojis[0]}"), InlineKeyboardButton(text=emojis[1], callback_data=f"capcha_{emojis[1]}"), InlineKeyboardButton(text=emojis[2], callback_data=f"capcha_{emojis[2]}"), InlineKeyboardButton(text=emojis[3], callback_data=f"capcha_{emojis[3]}")],
+        [InlineKeyboardButton(text=emojis[4], callback_data=f"capcha_{emojis[4]}"), InlineKeyboardButton(text=emojis[5], callback_data=f"capcha_{emojis[5]}"), InlineKeyboardButton(text=emojis[6], callback_data=f"capcha_{emojis[6]}"), InlineKeyboardButton(text=emojis[7], callback_data=f"capcha_{emojis[7]}")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard), correct_emoji
+
+class CapchaStates(StatesGroup):
+    waiting_capcha = State()
+
 class EditStates(StatesGroup):
     waiting_reply_add_name = State()
     waiting_reply_add_text = State()
@@ -182,7 +200,38 @@ class EditStates(StatesGroup):
 async def start(message: types.Message):
     cursor.execute("SELECT value FROM settings WHERE key='start_text'")
     start_text = cursor.fetchone()[0]
+    
+    # Выбираем случайный смайл для капчи
+    correct_emoji = random.choice(CAPCHA_EMOJIS)
+    keyboard, _ = get_capcha_keyboard(correct_emoji)
+    
+    # Сохраняем правильный смайл в состоянии пользователя
+    await state.set_state(CapchaStates.waiting_capcha)
+    await state.update_data(correct_emoji=correct_emoji)
+    
+    capcha_text = f"<blockquote><b>🔐 Проверка</b>\n<i>• Выберите смайл: {correct_emoji}</i>\n<i>• Нажмите на кнопку с этим смайлом</i>\n<i>• Это защита от ботов</i></blockquote>"
+    
     await message.answer(start_text, parse_mode="HTML", reply_markup=get_subs_keyboard())
+    await message.answer(capcha_text, parse_mode="HTML", reply_markup=keyboard)
+
+@dp.callback_query(lambda call: call.data.startswith("capcha_"), CapchaStates.waiting_capcha)
+async def check_capcha(call: types.CallbackQuery, state: FSMContext):
+    selected_emoji = call.data.split("_")[1]
+    data = await state.get_data()
+    correct_emoji = data.get("correct_emoji")
+    
+    if selected_emoji == correct_emoji:
+        await call.message.delete()
+        await call.message.answer("<blockquote><b>✅ Капча пройдена</b>\n<i>• Теперь подпишитесь на каналы</i></blockquote>", parse_mode="HTML")
+        await state.clear()
+    else:
+        # Неправильный выбор - показываем новую капчу
+        new_correct_emoji = random.choice(CAPCHA_EMOJIS)
+        keyboard, _ = get_capcha_keyboard(new_correct_emoji)
+        await state.update_data(correct_emoji=new_correct_emoji)
+        await call.message.edit_text(f"<blockquote><b>❌ Неправильно!</b>\n<i>• Выберите смайл: {new_correct_emoji}</i>\n<i>• Попробуйте еще раз</i></blockquote>", parse_mode="HTML", reply_markup=keyboard)
+    
+    await call.answer()
 
 @dp.callback_query(lambda call: call.data == "check_subs")
 async def check_subs(call: types.CallbackQuery):
@@ -194,8 +243,16 @@ async def check_subs(call: types.CallbackQuery):
     ])
     
     await call.message.delete()
+    
+    # Отправляем 🔑 с reply-кнопками
+    await call.message.answer("🔑", reply_markup=get_menu_keyboard())
+    
+    # Пауза 1 секунда
+    await asyncio.sleep(1)
+    
+    # Отправляем сообщение с одобрением доступа
     await call.message.answer(success_text, parse_mode="HTML", reply_markup=keyboard)
-    await call.message.answer(reply_markup=get_menu_keyboard())
+    
     await call.answer()
 
 @dp.message(Command("admin"))
